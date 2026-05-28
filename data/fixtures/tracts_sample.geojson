@@ -1,0 +1,49 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {"GEOID": "37119000100", "NAME": "Tract 1 (Uptown)"},
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-80.86, 35.22], [-80.82, 35.22], [-80.82, 35.24],
+          [-80.86, 35.24], [-80.86, 35.22]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {"GEOID": "37119000200", "NAME": "Tract 2 (NoDa)"},
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-80.82, 35.24], [-80.79, 35.24], [-80.79, 35.27],
+          [-80.82, 35.27], [-80.82, 35.24]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {"GEOID": "37119000300", "NAME": "Tract 3 (South End)"},
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-80.84, 35.19], [-80.81, 35.19], [-80.81, 35.22],
+          [-80.84, 35.22], [-80.84, 35.19]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {"GEOID": "37119000400", "NAME": "Tract 4 (University)"},
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-80.77, 35.30], [-80.73, 35.30], [-80.73, 35.33],
+          [-80.77, 35.33], [-80.77, 35.30]
+        ]]
+      }
+    }
+  ]
+}

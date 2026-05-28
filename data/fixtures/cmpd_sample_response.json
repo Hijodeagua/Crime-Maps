@@ -1,0 +1,83 @@
+{
+  "objectIdFieldName": "OBJECTID",
+  "globalIdFieldName": "",
+  "geometryType": "esriGeometryPoint",
+  "spatialReference": {"wkid": 4326, "latestWkid": 4326},
+  "fields": [
+    {"name": "OBJECTID",               "type": "esriFieldTypeOID",    "alias": "OBJECTID"},
+    {"name": "DATE_INCIDENT_BEGAN",    "type": "esriFieldTypeDate",   "alias": "Date Incident Began"},
+    {"name": "DATE_REPORTED",          "type": "esriFieldTypeDate",   "alias": "Date Reported"},
+    {"name": "Latitude",               "type": "esriFieldTypeDouble", "alias": "Latitude"},
+    {"name": "Longitude",              "type": "esriFieldTypeDouble", "alias": "Longitude"},
+    {"name": "HIGHEST_NIBRS_CODE",     "type": "esriFieldTypeString", "alias": "Highest NIBRS Code"},
+    {"name": "HIGHEST_NIBRS_DESCRIPTION","type": "esriFieldTypeString","alias": "Highest NIBRS Description"},
+    {"name": "DIVISION_ID",            "type": "esriFieldTypeString", "alias": "Division ID"}
+  ],
+  "features": [
+    {
+      "attributes": {
+        "OBJECTID": 1,
+        "DATE_INCIDENT_BEGAN": 1704067200000,
+        "DATE_REPORTED": 1704067200000,
+        "Latitude": 35.2271,
+        "Longitude": -80.8431,
+        "HIGHEST_NIBRS_CODE": "13A",
+        "HIGHEST_NIBRS_DESCRIPTION": "Simple Assault",
+        "DIVISION_ID": "CENTRAL"
+      },
+      "geometry": {"x": -80.8431, "y": 35.2271}
+    },
+    {
+      "attributes": {
+        "OBJECTID": 2,
+        "DATE_INCIDENT_BEGAN": 1704153600000,
+        "DATE_REPORTED": 1704153600000,
+        "Latitude": 35.2560,
+        "Longitude": -80.8070,
+        "HIGHEST_NIBRS_CODE": "23A",
+        "HIGHEST_NIBRS_DESCRIPTION": "Theft From Building",
+        "DIVISION_ID": "NORTH"
+      },
+      "geometry": {"x": -80.8070, "y": 35.2560}
+    },
+    {
+      "attributes": {
+        "OBJECTID": 3,
+        "DATE_INCIDENT_BEGAN": null,
+        "DATE_REPORTED": 1704240000000,
+        "Latitude": 35.1988,
+        "Longitude": -80.8273,
+        "HIGHEST_NIBRS_CODE": "120",
+        "HIGHEST_NIBRS_DESCRIPTION": "Robbery",
+        "DIVISION_ID": "SOUTH"
+      },
+      "geometry": {"x": -80.8273, "y": 35.1988}
+    },
+    {
+      "attributes": {
+        "OBJECTID": 4,
+        "DATE_INCIDENT_BEGAN": 1704326400000,
+        "DATE_REPORTED": 1704326400000,
+        "Latitude": 35.3140,
+        "Longitude": -80.7510,
+        "HIGHEST_NIBRS_CODE": "90Z",
+        "HIGHEST_NIBRS_DESCRIPTION": "All Other Offenses",
+        "DIVISION_ID": "UNIVERSITY"
+      },
+      "geometry": {"x": -80.7510, "y": 35.3140}
+    },
+    {
+      "attributes": {
+        "OBJECTID": 5,
+        "DATE_INCIDENT_BEGAN": 1704412800000,
+        "DATE_REPORTED": 1704412800000,
+        "Latitude": 35.2300,
+        "Longitude": -80.8700,
+        "HIGHEST_NIBRS_CODE": "820",
+        "HIGHEST_NIBRS_DESCRIPTION": "Missing Person",
+        "DIVISION_ID": "WEST"
+      },
+      "geometry": {"x": -80.8700, "y": 35.2300}
+    }
+  ]
+}

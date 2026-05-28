@@ -1,0 +1,14 @@
+data/cache/
+!data/cache/.gitkeep
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+# Cache parquet is covered by data/cache/ above; fixtures must be tracked.
