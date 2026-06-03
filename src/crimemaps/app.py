@@ -20,8 +20,8 @@ import crimemaps.hotspots as hotspots
 import crimemaps.intensity as intensity
 from crimemaps import aggregate, cache
 from crimemaps.config import CITIES, CityConfig
-from crimemaps.geography import assign_geography, load_boundaries
-from crimemaps.loader import DataSourceInfo, load
+from crimemaps.geography import load_boundaries
+from crimemaps.loader import load
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -169,8 +169,6 @@ except Exception as e:
 # ---------------------------------------------------------------------------
 
 source_labels = {"live": "🟢 Live CMPD API", "snapshot": "🟡 Cached snapshot", "demo": "🔴 Synthetic demo"}
-source_label = source_labels.get(info.tier, info.tier)
-snap_note = f" (pinned: {info.retrieved_at[:19]})" if info.retrieved_at else ""
 
 col_a, col_b, col_c, col_d = st.columns(4)
 col_a.metric("Data source", source_labels.get(info.tier, info.tier))
@@ -225,9 +223,8 @@ with tab1:
         st_folium(fmap, width=None, height=560, returned_objects=[])
 
     if not tract_data.empty:
-        n_suppressed = tract_data["rate_suppressed"].sum()
+        n_suppressed = int(tract_data["rate_suppressed"].sum())
         n_total_tracts = len(tract_data)
-        n_geo_only = n_total_tracts - len(df[df["geography_id"] != "UNASSIGNED"]["geography_id"].unique())
         st.caption(
             f"{n_suppressed} of {n_total_tracts} tracts suppressed (low pop.) · "
             f"{info.unassigned_count:,} incidents unassigned (outside tract boundaries or null coords)"

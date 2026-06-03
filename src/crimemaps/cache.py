@@ -17,7 +17,6 @@ data/cache/<city>/<source>/<retrieved_at>__<start>_<end>/
 
 import json
 import logging
-import os
 from pathlib import Path
 from typing import List, Optional
 

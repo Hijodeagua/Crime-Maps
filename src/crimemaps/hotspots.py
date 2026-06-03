@@ -7,7 +7,6 @@ distinct style and labeled as "Suppressed (low pop.)" in the legend.
 """
 
 import logging
-from typing import Optional
 
 import folium
 import geopandas as gpd

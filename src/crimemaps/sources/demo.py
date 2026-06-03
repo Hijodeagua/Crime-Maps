@@ -12,7 +12,6 @@ import numpy as np
 import pandas as pd
 
 from crimemaps import schema
-from crimemaps.config import CityConfig
 from crimemaps.sources.base import MeasureSource
 
 logger = logging.getLogger(__name__)
