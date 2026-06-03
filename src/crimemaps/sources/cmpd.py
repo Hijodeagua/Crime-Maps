@@ -24,7 +24,6 @@ resultRecordCount and stop when:
 """
 
 import logging
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -236,7 +235,6 @@ class CMPDSource(MeasureSource):
                 dt = pd.NaT
 
             nibrs_code = str(attrs.get(fm.nibrs_code) or "")
-            offense = str(attrs.get(fm.offense) or "")
 
             # Exclude 800-series (non-criminal) if configured
             if self.city.exclude_800_series and nibrs_code.startswith("8"):

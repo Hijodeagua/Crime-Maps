@@ -97,8 +97,17 @@ def _fetch_acs(city: CityConfig) -> Optional[pd.DataFrame]:
     headers, *rows = data
     df = pd.DataFrame(rows, columns=headers)
 
-    # Build 11-digit GEOID from state + county + tract components
-    df["geography_id"] = df["state"] + df["county"] + df["tract"]
+    # Build the 11-digit tract GEOID. The Census API returns a "GEO_ID" of the
+    # form "1400000US37119000100"; the trailing component after "US" is the GEOID.
+    # Fall back to concatenating the state/county/tract component columns the API
+    # appends when querying "for=tract:* in=state:.. county:..".
+    if "GEO_ID" in df.columns:
+        df["geography_id"] = df["GEO_ID"].str.split("US").str[-1]
+    elif {"state", "county", "tract"}.issubset(df.columns):
+        df["geography_id"] = df["state"] + df["county"] + df["tract"]
+    else:
+        logger.warning("ACS response missing GEO_ID and state/county/tract columns")
+        return None
     df["population"] = pd.to_numeric(df["B01003_001E"], errors="coerce").fillna(0).astype(int)
 
     result = df[["geography_id", "population"]].copy()
@@ -149,7 +158,6 @@ def merge_population(
     merged["rate_suppressed"] = merged["population"] < city.min_population_for_rate
 
     # Rate per 1,000 residents; NaN for suppressed / zero-pop tracts
-    denom = merged["population"].where(~merged["rate_suppressed"], other=0)
     merged["rate_per_1k"] = merged.apply(
         lambda r: (r["count"] / r["population"] * 1000)
         if (not r["rate_suppressed"] and r["population"] > 0) else float("nan"),

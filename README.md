@@ -75,12 +75,12 @@ bandwidth slider is in meaningful meters. Bandwidth and recency half-life are tu
 
 ```bash
 # Clone and install
-git clone https://github.com/hijodeagua/crime-maps
-cd crime-maps
+git clone https://github.com/Hijodeagua/Crime-Maps
+cd Crime-Maps
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# Run the app
+# Run the app (interactive Streamlit dashboard)
 streamlit run src/crimemaps/app.py
 
 # Run tests
@@ -89,6 +89,23 @@ pytest tests/
 
 **Environment variables:**
 - `CENSUS_API_KEY` — optional Census Bureau API key (app works without it at low volume)
+
+## What works without external data
+
+The dashboard is a runnable Streamlit web app, not a one-off script. It launches and is
+fully interactive even with no network access:
+
+- **Live mode** requires three public endpoints to be reachable: the CMPD ArcGIS REST API
+  (incidents), TIGERweb (tract boundaries), and the Census ACS API (population). These can
+  be blocked by network policy or temporary outages.
+- **When those are unreachable**, the app degrades gracefully and clearly labels the active
+  tier in its header: cached snapshots if present, otherwise **synthetic demo incidents**
+  plus a small **bundled tract/population fixture** (4 sample Charlotte tracts). In this mode
+  every count, rate, and projection is fabricated and flagged as such in the UI — useful for
+  exercising the interface, not for analysis.
+
+So the app and the full aggregation/mapping/projection pipeline run anywhere; real Charlotte
+results require the public data APIs above to be reachable.
 
 ---
 

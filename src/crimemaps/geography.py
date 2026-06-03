@@ -25,7 +25,6 @@ import numpy as np
 import pandas as pd
 import requests
 from pyproj import Transformer
-from shapely.geometry import Point
 
 from crimemaps import schema
 from crimemaps.config import CityConfig
@@ -141,8 +140,16 @@ def assign_geography(
         predicate="within",
     )
 
-    # Map back GEOID; unmatched remain UNASSIGNED
-    geoid_series = joined[geoid_col].fillna(schema.UNASSIGNED)
+    # A point on a shared tract edge can match multiple polygons, yielding
+    # duplicate join rows. Collapse back to one GEOID per original incident so the
+    # assignment aligns with the masked rows.
+    geoid_series = (
+        joined[geoid_col]
+        .groupby(level=0)
+        .first()
+        .reindex(joinable.index)
+        .fillna(schema.UNASSIGNED)
+    )
     df.loc[mask, "geography_id"] = geoid_series.values
 
     n_unassigned = (df["geography_id"] == schema.UNASSIGNED).sum()
