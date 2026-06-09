@@ -18,10 +18,10 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 
 import crimemaps.hotspots as hotspots
 import crimemaps.intensity as intensity
-from crimemaps import aggregate, cache
+from crimemaps import aggregate, cache, streetmap
 from crimemaps.config import CITIES, CityConfig
 from crimemaps.geography import assign_geography, load_boundaries
-from crimemaps.loader import DataSourceInfo, load
+from crimemaps.loader import DataSourceInfo, load, load_cfs
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -50,16 +50,42 @@ with st.sidebar:
 
     st.divider()
 
-    # Date range
+    # Date range — quick presets over a rolling window capped at max_history_days
     st.subheader("Date range")
-    default_end = pd.Timestamp.now().normalize()
-    default_start = default_end - pd.Timedelta(days=180)
+    today = pd.Timestamp.now().normalize()
+    earliest = today - pd.Timedelta(days=city.max_history_days)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        start_date = st.date_input("From", value=default_start.date())
-    with col2:
-        end_date = st.date_input("To", value=default_end.date())
+    PRESETS = {
+        "Last 7 days": 7,
+        "Last 30 days": 30,
+        "Last 90 days": 90,
+        "Last 6 months": 180,
+        "Past year": 365,
+        "Past 3 years": city.max_history_days,
+        "Custom range": None,
+    }
+    preset = st.selectbox("Period", options=list(PRESETS.keys()), index=3)
+
+    if PRESETS[preset] is not None:
+        end_date = today.date()
+        start_date = (today - pd.Timedelta(days=PRESETS[preset])).date()
+        st.caption(f"{start_date} → {end_date}")
+    else:
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input(
+                "From",
+                value=(today - pd.Timedelta(days=180)).date(),
+                min_value=earliest.date(),
+                max_value=today.date(),
+            )
+        with col2:
+            end_date = st.date_input(
+                "To",
+                value=today.date(),
+                min_value=earliest.date(),
+                max_value=today.date(),
+            )
 
     start = pd.Timestamp(start_date)
     end = pd.Timestamp(end_date)
@@ -67,6 +93,23 @@ with st.sidebar:
     if start > end:
         st.error("Start date must be before end date.")
         st.stop()
+
+    st.caption(
+        f"History is capped at {city.max_history_days // 365} years: older records "
+        "are increasingly affected by upstream reclassification, and multi-year "
+        "pulls are large. Wide ranges are fetched once, snapshotted, then served "
+        "from disk."
+    )
+
+    prefer_cache = st.toggle(
+        "Prefer cached data (faster)",
+        value=False,
+        help=(
+            "Serve the request from an existing snapshot that covers the selected "
+            "range instead of re-querying the live API. Recommended for multi-year "
+            "ranges after the first pull."
+        ),
+    )
 
     st.divider()
 
@@ -102,7 +145,7 @@ with st.sidebar:
 
     # Snapshot pin
     st.subheader("Snapshot / reproducibility")
-    snaps = cache.list_snapshots(city_slug, "cmpd_incidents")
+    snaps = cache.list_snapshots(city_slug, city.incident_source_slug)
     snap_options = ["Latest (auto)"] + [s["retrieved_at"][:19] for s in snaps]
     pinned = st.selectbox("Pin to pull timestamp", options=snap_options)
     pinned_snapshot = None if pinned == "Latest (auto)" else pinned
@@ -133,6 +176,7 @@ def cached_load(
     end_iso: str,
     categories: tuple,
     pinned_snapshot,
+    prefer_cache: bool = False,
 ):
     city = CITIES[city_slug]
     return load(
@@ -141,7 +185,14 @@ def cached_load(
         pd.Timestamp(end_iso),
         categories=categories,
         pinned_snapshot=pinned_snapshot,
+        prefer_cache=prefer_cache,
     )
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cached_load_cfs(city_slug: str, start_iso: str, end_iso: str):
+    city = CITIES[city_slug]
+    return load_cfs(city, pd.Timestamp(start_iso), pd.Timestamp(end_iso))
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -156,6 +207,7 @@ with st.spinner("Loading incident data…"):
         end.isoformat(),
         tuple(selected_categories),
         pinned_snapshot,
+        prefer_cache,
     )
 
 try:
@@ -202,10 +254,12 @@ with st.spinner("Aggregating to census tracts…"):
 # Tabs
 # ---------------------------------------------------------------------------
 
-tab1, tab2, tab3 = st.tabs([
+tab1, tab_street, tab2, tab3, tab_live = st.tabs([
     "📊 Per-Capita Hotspots",
+    "🔥 Street-Level Heat Map",
     "📈 Trends",
-    "🔥 Recent-Intensity Projection",
+    "🌡️ Recent-Intensity Projection",
+    "📡 Live Activity",
 ])
 
 # ------ Tab 1: Choropleth ------
@@ -232,6 +286,64 @@ with tab1:
             f"{n_suppressed} of {n_total_tracts} tracts suppressed (low pop.) · "
             f"{info.unassigned_count:,} incidents unassigned (outside tract boundaries or null coords)"
         )
+
+# ------ Street-Level Heat Map ------
+with tab_street:
+    st.subheader("Street-Level Heat Map")
+    st.caption(
+        "Raw incident points — **not population-adjusted**: busy areas glow partly "
+        "because more people are there. Agencies typically geocode to the block "
+        "midpoint, so street-level precision is approximate. Use the time slider "
+        "to scrub through the selected period."
+    )
+
+    if df.empty:
+        st.info("No data to display. Try adjusting the date range or category filters.")
+    else:
+        range_days = (end - start).days
+        mode = st.radio(
+            "View",
+            options=["Static heat map", "Animated over time", "Individual incidents"],
+            horizontal=True,
+            key="street_mode",
+        )
+
+        smap = hotspots.base_map(city.map_center, city.map_zoom)
+
+        if mode == "Static heat map":
+            layer, note = streetmap.heatmap_layer(df)
+            if layer is None:
+                st.info(note)
+            else:
+                layer.add_to(smap)
+                st_folium(smap, width=None, height=560, returned_objects=[])
+                if note:
+                    st.caption(note)
+
+        elif mode == "Animated over time":
+            # Weekly frames stay legible up to ~6 months; monthly beyond that
+            freq = "W" if range_days <= 190 else "MS"
+            freq_label = "weekly" if freq == "W" else "monthly"
+            smap, err = streetmap.animated_heatmap(smap, df, freq=freq)
+            if err:
+                st.info(err)
+            else:
+                st_folium(smap, width=None, height=560, returned_objects=[])
+                st.caption(
+                    f"{freq_label.capitalize()} frames · use ▶ or drag the slider "
+                    "to move through time."
+                )
+
+        else:
+            layer, note = streetmap.marker_cluster_layer(df)
+            if layer is None:
+                st.info(note)
+            else:
+                layer.add_to(smap)
+                st_folium(smap, width=None, height=560, returned_objects=[])
+                if note:
+                    st.caption(note)
+                st.caption("Marker colors: 🔴 Violent · 🟠 Property · 🔵 Other · ⚪ Unknown")
 
 # ------ Tab 2: Trends ------
 with tab2:
@@ -330,3 +442,93 @@ with tab3:
                     f"Bandwidth: {bandwidth_m} m · Recency half-life: {halflife_days} days · "
                     f"CRS: {city.planar_crs} (projected) → EPSG:4326 (display)"
                 )
+
+# ------ Live Activity (calls for service + scanner links) ------
+with tab_live:
+    st.subheader("Live Activity — Calls for Service")
+    st.caption(
+        "Recent 911 / officer-initiated dispatch calls — the structured counterpart "
+        "to scanner traffic. **Calls ≠ crimes**: many calls are unfounded, duplicated, "
+        "or reclassified after investigation. Use this as a what-is-happening-now view, "
+        "not as evidence of crime levels."
+    )
+
+    col_lb, col_rf = st.columns([3, 1])
+    with col_lb:
+        lookback_label = st.select_slider(
+            "Lookback window",
+            options=["6 hours", "24 hours", "3 days", "7 days"],
+            value="24 hours",
+        )
+    with col_rf:
+        st.write("")
+        if st.button("🔄 Refresh feed"):
+            cached_load_cfs.clear()
+
+    _LOOKBACK_HOURS = {"6 hours": 6, "24 hours": 24, "3 days": 72, "7 days": 168}
+    cfs_end = pd.Timestamp.now()
+    cfs_start = cfs_end - pd.Timedelta(hours=_LOOKBACK_HOURS[lookback_label])
+
+    with st.spinner("Loading calls for service…"):
+        cfs_df, cfs_info = cached_load_cfs(
+            city_slug, cfs_start.isoformat(), cfs_end.isoformat()
+        )
+
+    cfs_tier_labels = {
+        "live": "🟢 Live dispatch feed",
+        "snapshot": "🟡 Cached snapshot",
+        "demo": "🔴 Synthetic demo feed",
+    }
+    mcol1, mcol2, mcol3 = st.columns(3)
+    mcol1.metric("Feed source", cfs_tier_labels.get(cfs_info.tier, cfs_info.tier))
+    mcol2.metric("Calls in window", f"{cfs_info.row_count:,}")
+    mcol3.metric("Without coordinates", f"{cfs_info.unassigned_count:,}")
+
+    if cfs_info.tier == "demo":
+        st.warning(
+            "⚠️ **Synthetic feed.** The live calls-for-service endpoint is unreachable "
+            "(or not configured for this city) and no snapshot exists. Calls below are "
+            "fabricated for UI testing."
+        )
+
+    if cfs_df.empty:
+        st.info("No calls in the selected window.")
+    else:
+        map_col, table_col = st.columns([3, 2])
+
+        with map_col:
+            live_map = hotspots.base_map(city.map_center, city.map_zoom)
+            layer, note = streetmap.cfs_map_layer(cfs_df)
+            if layer is not None:
+                layer.add_to(live_map)
+                st_folium(live_map, width=None, height=480, returned_objects=[])
+            if note:
+                st.info(note)
+
+        with table_col:
+            st.markdown("**Most recent calls**")
+            display = cfs_df.head(200).copy()
+            display["time"] = display["datetime"].dt.strftime("%m-%d %H:%M")
+            st.dataframe(
+                display[["time", "call_type", "address", "division"]],
+                width='stretch',
+                hide_index=True,
+                height=420,
+            )
+
+            st.markdown("**Top call types in window**")
+            top_types = (
+                cfs_df["call_type"].value_counts().head(8)
+                .rename_axis("call_type").reset_index(name="count")
+            )
+            st.dataframe(top_types, width='stretch', hide_index=True)
+
+    if city.scanner_feeds:
+        st.divider()
+        st.markdown("**🎧 Live scanner audio**")
+        st.caption(
+            "Scanner audio is a live stream with no structured API, so it isn't "
+            "ingested into the maps — listen alongside the dispatch feed instead."
+        )
+        for feed in city.scanner_feeds:
+            st.markdown(f"- [{feed.name}]({feed.url}) — {feed.note}")

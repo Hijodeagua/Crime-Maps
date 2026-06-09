@@ -44,10 +44,16 @@ TZ_LOCAL = "America/New_York"
 
 
 class CMPDSource(MeasureSource):
-    source_slug = "cmpd_incidents"
+    """Generic ArcGIS REST incident source. Named for its first deployment
+    (CMPD); all city specifics come from CityConfig.field_mapping, so any city
+    with an ArcGIS incidents layer reuses this class unchanged."""
+
+    # Class-level default shadows the abstract property; overridden per-city in __init__
+    source_slug = "police_incidents"
 
     def __init__(self, city: CityConfig, session: Optional[requests.Session] = None):
         super().__init__(city)
+        self.source_slug = city.incident_source_slug
         self._session = session or requests.Session()
         self._validated_fields: Optional[Dict[str, Any]] = None
 

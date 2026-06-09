@@ -96,6 +96,25 @@ def list_snapshots(city_slug: str, source_slug: str) -> List[dict]:
     return sorted(entries, key=lambda e: e["retrieved_at"], reverse=True)
 
 
+def find_covering(
+    city_slug: str,
+    source_slug: str,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> Optional[dict]:
+    """
+    Return the newest manifest entry whose stored [start, end] covers the
+    requested range, or None. Lets the app serve wide historical ranges
+    (e.g. 3 years) from disk instead of re-fetching from the API.
+    """
+    req_start = start.date().isoformat()
+    req_end = end.date().isoformat()
+    for snap in list_snapshots(city_slug, source_slug):
+        if snap.get("start", "9999") <= req_start and snap.get("end", "0000") >= req_end:
+            return snap
+    return None
+
+
 def load_latest(city_slug: str, source_slug: str) -> Optional[pd.DataFrame]:
     """Load the most recent snapshot, or None if no snapshots exist."""
     snaps = list_snapshots(city_slug, source_slug)

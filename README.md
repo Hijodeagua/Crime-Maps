@@ -1,7 +1,12 @@
 # Crime Maps
 
 An open, measure-agnostic platform for exploring recorded police incidents alongside
-other measures of crime — starting with Charlotte, NC (CMPD incidents).
+other measures of crime — starting with Charlotte, NC (CMPD incidents), with
+Raleigh, NC as a second (experimental) city.
+
+**Views:** street-level heat maps (static + time-slider animation over up to 3 years),
+per-capita census-tract choropleths, temporal trends, a recency-weighted intensity
+projection, and a live-activity feed of 911 calls for service with scanner-audio links.
 
 ---
 
@@ -61,6 +66,58 @@ validated against the live layer metadata at fetch time.
 
 ---
 
+## "Street-Level Heat Map" tab
+
+Renders the raw incident point cloud directly (folium HeatMap), so hot blocks and
+corridors are visible at street zoom. Three sub-views:
+
+- **Static heat map** over the selected period
+- **Animated over time** — `HeatMapWithTime` with one frame per week (ranges ≤ ~6
+  months) or per month (longer ranges), with a play/scrub slider covering up to the
+  full 3-year window
+- **Individual incidents** — clustered markers with offense/date popups, color-coded
+  by category
+
+Caveats: raw points are **not population-adjusted** — dense areas glow partly because
+more people are there (the per-capita choropleth remains the analysis-grade view).
+Agencies geocode to block midpoints, so apparent address precision is approximate.
+Very large pulls are randomly downsampled for rendering (noted in the UI).
+
+### Why the date range is capped at 3 years
+
+Three years is supported and is the cap. The Charlotte dataset goes back further,
+but (a) multi-year pulls are large (~100k+ records/year) and (b) upstream
+reclassification/back-dating makes older records progressively less comparable
+across pulls. A 3-year range is fetched once, snapshotted to `data/cache/`, and
+subsequent requests inside that range can be served from disk via the
+**"Prefer cached data"** sidebar toggle (the loader picks any snapshot whose stored
+range covers the requested one).
+
+---
+
+## "Live Activity" tab — calls for service + scanner audio
+
+Police **scanner audio** (Broadcastify, OpenMHz) is a live audio stream with no
+structured API, so it can't be ingested into maps directly. The machine-readable
+counterpart is the **calls-for-service (CFS)** dataset: every dispatched 911 /
+officer-initiated call with timestamp, call type, and (usually block-level) location.
+The Live Activity tab shows:
+
+- recent calls on a map (when the layer publishes coordinates) and as a table
+- top call types over a configurable lookback window (6 h – 7 days)
+- links to scanner-audio directories for listening alongside
+
+**Calls ≠ crimes:** many calls are unfounded, duplicated, or reclassified after
+investigation. This is a "what is being dispatched right now" view, not a crime measure.
+
+CFS field names drift across portals, so the configured `CFSFieldMapping` is treated
+as a hint: the source resolves each canonical field against live layer metadata
+(exact match first, then name/type heuristics) and falls back to snapshot → synthetic
+demo tiers when the endpoint is unreachable. If the live CMPD CFS layer's endpoint or
+fields change, fixing it is a one-line edit in `config.py`.
+
+---
+
 ## "Recent-Intensity Projection" tab
 
 The third tab is **not a forecast.** It uses a recency-weighted kernel density estimator
@@ -108,9 +165,20 @@ The active tier and unassigned-incident rate are displayed in the UI header.
 ## Adding a city
 
 1. Add a `CityConfig` entry to `src/crimemaps/config.py` with the city's ArcGIS
-   endpoint, census FIPS codes, planar CRS, and NIBRS groups.
+   endpoint, census FIPS codes, planar CRS, and NIBRS groups. Optionally add a
+   `CFSConfig` (calls-for-service endpoint), `scanner_feeds` links, and
+   `demo_clusters` for the synthetic fallback source.
 2. Register it in `CITIES`.
 3. The city selector in the sidebar will pick it up automatically.
+
+The ArcGIS incident source (`sources/cmpd.py`) is generic — all city specifics come
+from `CityConfig.field_mapping`, and date fields are validated against live layer
+metadata at fetch time.
+
+**Raleigh, NC** ships as a second city and is marked experimental: its endpoint and
+field names are best-effort from the Raleigh open data portal and validated at
+runtime. If the live layer disagrees, the app falls back to snapshot/demo tiers and
+the data-source banner says so.
 
 ---
 
