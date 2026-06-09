@@ -29,6 +29,7 @@ from shapely.geometry import Point
 
 from crimemaps import schema
 from crimemaps.config import CityConfig
+from crimemaps.http import retrying_session
 
 logger = logging.getLogger(__name__)
 
@@ -87,12 +88,13 @@ def _fetch_boundaries(city: CityConfig) -> Optional[gpd.GeoDataFrame]:
             "f": "geojson",
             "returnGeometry": "true",
         }
-        resp = requests.get(url, params=params, timeout=_REQUEST_TIMEOUT)
+        resp = retrying_session().get(url, params=params, timeout=_REQUEST_TIMEOUT)
         resp.raise_for_status()
         gdf = gpd.read_file(resp.text, driver="GeoJSON")
         logger.info("Fetched %d tract boundaries from TIGERweb", len(gdf))
         return gdf
-    except Exception as exc:
+    # RuntimeError covers fiona/pyogrio GeoJSON parse failures
+    except (requests.RequestException, ValueError, OSError, RuntimeError) as exc:
         logger.warning("Failed to fetch boundaries from TIGERweb: %s", exc)
         return None
 

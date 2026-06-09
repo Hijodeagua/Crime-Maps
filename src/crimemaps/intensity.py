@@ -92,7 +92,7 @@ def intensity_layer(
             bw_method=bandwidth_m / np.std(np.concatenate([x, y])),
             weights=weights,
         )
-    except Exception as exc:
+    except (np.linalg.LinAlgError, ValueError) as exc:
         msg = f"KDE fitting failed: {exc}"
         logger.error(msg)
         return None, msg

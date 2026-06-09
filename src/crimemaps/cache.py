@@ -125,6 +125,7 @@ def _load_parquet(rel_path: str) -> Optional[pd.DataFrame]:
                 if df[col].dt.tz is None:
                     df[col] = df[col].dt.tz_localize("America/New_York")
         return df
-    except Exception as exc:
+    # ArrowInvalid subclasses ValueError; OSError covers truncated/missing files
+    except (OSError, ValueError, KeyError) as exc:
         logger.error("Failed to load parquet %s: %s", path, exc)
         return None

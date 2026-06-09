@@ -25,6 +25,7 @@ import pandas as pd
 import requests
 
 from crimemaps.config import CityConfig
+from crimemaps.http import retrying_session
 
 logger = logging.getLogger(__name__)
 
@@ -83,10 +84,10 @@ def _fetch_acs(city: CityConfig) -> Optional[pd.DataFrame]:
         params["key"] = api_key
 
     try:
-        resp = requests.get(url, params=params, timeout=_REQUEST_TIMEOUT)
+        resp = retrying_session().get(url, params=params, timeout=_REQUEST_TIMEOUT)
         resp.raise_for_status()
         data = resp.json()
-    except Exception as exc:
+    except (requests.RequestException, ValueError) as exc:
         logger.warning("ACS API fetch failed: %s", exc)
         return None
 

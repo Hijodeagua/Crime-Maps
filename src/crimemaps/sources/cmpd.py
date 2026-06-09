@@ -32,6 +32,7 @@ import requests
 
 from crimemaps import schema
 from crimemaps.config import CityConfig
+from crimemaps.http import retrying_session
 from crimemaps.sources.base import MeasureSource
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ class CMPDSource(MeasureSource):
 
     def __init__(self, city: CityConfig, session: Optional[requests.Session] = None):
         super().__init__(city)
-        self._session = session or requests.Session()
+        self._session = session or retrying_session()
         self._validated_fields: Optional[Dict[str, Any]] = None
 
     # ------------------------------------------------------------------
@@ -97,7 +98,7 @@ class CMPDSource(MeasureSource):
             )
             resp.raise_for_status()
             meta = resp.json()
-        except Exception as exc:
+        except (requests.RequestException, ValueError) as exc:
             logger.warning(
                 "Could not fetch layer metadata (%s); using default field mapping", exc
             )
@@ -178,7 +179,7 @@ class CMPDSource(MeasureSource):
                 )
                 resp.raise_for_status()
                 data = resp.json()
-            except Exception as exc:
+            except (requests.RequestException, ValueError) as exc:
                 logger.error("CMPD page %d fetch error: %s", page_num, exc)
                 break
 
