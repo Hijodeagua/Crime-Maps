@@ -16,6 +16,7 @@ import pandas as pd
 from crimemaps import cache, schema
 from crimemaps.config import CityConfig
 from crimemaps.geography import assign_geography
+from crimemaps.sources import cfs as cfs_source
 from crimemaps.sources.cmpd import CMPDSource
 from crimemaps.sources.demo import DemoSource
 
@@ -41,22 +42,36 @@ def load(
     end: pd.Timestamp,
     categories: tuple = (),
     pinned_snapshot: Optional[str] = None,
+    prefer_cache: bool = False,
 ) -> tuple[pd.DataFrame, DataSourceInfo]:
     """
     Load incidents for [start, end] for the given city and return
     (canonical_df, DataSourceInfo).
 
     If pinned_snapshot is set (a retrieved_at ISO prefix), load that specific snapshot.
+    If prefer_cache is set, a cached snapshot covering [start, end] is served
+    without hitting the live API — the fast path for multi-year ranges.
     """
     retrieved_at = pd.Timestamp.now(tz=TZ_LOCAL)
+    source_slug = city.incident_source_slug
 
     # --- Tier 0: pinned snapshot ---
     if pinned_snapshot:
-        df = cache.load_snapshot(city.slug, "cmpd_incidents", pinned_snapshot)
+        df = cache.load_snapshot(city.slug, source_slug, pinned_snapshot)
         if df is not None:
             df = _filter(df, start, end, categories)
             df, info = _finalize(df, "snapshot", pinned_snapshot)
             return df, info
+
+    # --- Tier 0.5: covering snapshot, when the caller prefers cache ---
+    if prefer_cache:
+        covering = cache.find_covering(city.slug, source_slug, start, end)
+        if covering:
+            df = cache.load_snapshot(city.slug, source_slug, covering["retrieved_at"])
+            if df is not None:
+                df = _filter(df, start, end, categories)
+                df, info = _finalize(df, "snapshot", covering["retrieved_at"])
+                return df, info
 
     # --- Tier 1: live API ---
     try:
@@ -72,10 +87,10 @@ def load(
         logger.warning("Live CMPD fetch failed (%s); trying snapshot cache", exc)
 
     # --- Tier 2: latest snapshot ---
-    df = cache.load_latest(city.slug, "cmpd_incidents")
+    df = cache.load_latest(city.slug, source_slug)
     if df is not None and not df.empty:
         df = _filter(df, start, end, categories)
-        snaps = cache.list_snapshots(city.slug, "cmpd_incidents")
+        snaps = cache.list_snapshots(city.slug, source_slug)
         snap_ts = snaps[0]["retrieved_at"] if snaps else "cached"
         df, info = _finalize(df, "snapshot", snap_ts)
         return df, info
@@ -128,5 +143,60 @@ def _finalize(
         row_count=n,
         unassigned_count=int(n_unassigned),
         unassigned_pct=round(pct, 1),
+    )
+    return df, info
+
+
+def load_cfs(
+    city: CityConfig,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> tuple[pd.DataFrame, DataSourceInfo]:
+    """
+    Load calls-for-service (911 dispatch) for [start, end] with the same tiered
+    fallback as incidents: live → latest snapshot → synthetic demo.
+
+    Returns a CFS-schema DataFrame (see sources/cfs.py), NOT the canonical
+    incident schema — CFS is an operational live-activity feed.
+    """
+    retrieved_at = pd.Timestamp.now(tz=TZ_LOCAL)
+    slug = cfs_source.SOURCE_SLUG
+
+    if city.cfs is not None:
+        try:
+            df = cfs_source.CFSSource(city).fetch(start, end, retrieved_at=retrieved_at)
+            if df is not None and not df.empty:
+                cache.save(df, city.slug, slug, retrieved_at, start, end)
+                return _finalize_cfs(df, "live", retrieved_at.isoformat())
+        except Exception as exc:
+            logger.warning("Live CFS fetch failed (%s); trying snapshot cache", exc)
+
+    df = cache.load_latest(city.slug, slug)
+    if df is not None and not df.empty:
+        mask = (df["datetime"] >= _tz(start)) & (df["datetime"] <= _tz(end))
+        df = df[mask]
+        if not df.empty:
+            snaps = cache.list_snapshots(city.slug, slug)
+            snap_ts = snaps[0]["retrieved_at"] if snaps else "cached"
+            return _finalize_cfs(df, "snapshot", snap_ts)
+
+    logger.warning("No live or cached CFS data; using synthetic demo feed")
+    df = cfs_source.DemoCFSSource(city).fetch(start, end, retrieved_at=retrieved_at)
+    return _finalize_cfs(df, "demo", retrieved_at.isoformat())
+
+
+def _tz(ts: pd.Timestamp) -> pd.Timestamp:
+    return ts.tz_localize(TZ_LOCAL) if ts.tz is None else ts
+
+
+def _finalize_cfs(df: pd.DataFrame, tier: str, retrieved_at: str) -> tuple[pd.DataFrame, DataSourceInfo]:
+    n = len(df)
+    n_unmapped = int((df["lat"].isna() | (df["lat"] == 0.0)).sum()) if n else 0
+    info = DataSourceInfo(
+        tier=tier,
+        retrieved_at=retrieved_at,
+        row_count=n,
+        unassigned_count=n_unmapped,
+        unassigned_pct=round(100.0 * n_unmapped / n, 1) if n else 0.0,
     )
     return df, info
