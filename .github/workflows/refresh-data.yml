@@ -1,0 +1,62 @@
+# Nightly data refresh.
+#
+# Fetches real incident / boundary / population / calls-for-service data and
+# commits the snapshots under data/cache/. Deployments that can't reach the
+# city APIs directly (e.g. Streamlit Community Cloud blocked by a WAF) then
+# serve real data via the loader's snapshot tier — the repo is the data relay.
+#
+# The job fails loudly if no city could be fetched, so endpoint breakage shows
+# up in the Actions tab instead of silently degrading to synthetic data.
+
+name: Refresh data snapshots
+
+on:
+  schedule:
+    - cron: "17 9 * * *" # 05:17 ET daily (09:17 UTC)
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "History window in days (default: per-city max, 3 years)"
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-data
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Fetch fresh data
+        env:
+          CENSUS_API_KEY: ${{ secrets.CENSUS_API_KEY }}
+        run: |
+          EXTRA=""
+          if [ -n "${{ inputs.days }}" ]; then EXTRA="--days ${{ inputs.days }}"; fi
+          python scripts/refresh_data.py $EXTRA
+
+      - name: Commit snapshots
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/cache
+          if git diff --cached --quiet; then
+            echo "No data changes to commit."
+          else
+            git commit -m "Refresh data snapshots ($(date -u +%F))"
+            git push
+          fi

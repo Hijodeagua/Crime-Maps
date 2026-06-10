@@ -24,6 +24,7 @@ from typing import Optional
 import pandas as pd
 import requests
 
+from crimemaps import http
 from crimemaps.config import CityConfig
 
 logger = logging.getLogger(__name__)
@@ -83,7 +84,7 @@ def _fetch_acs(city: CityConfig) -> Optional[pd.DataFrame]:
         params["key"] = api_key
 
     try:
-        resp = requests.get(url, params=params, timeout=_REQUEST_TIMEOUT)
+        resp = http.get(url, params=params, timeout=_REQUEST_TIMEOUT)
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:

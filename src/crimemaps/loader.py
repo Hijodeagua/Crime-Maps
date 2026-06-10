@@ -34,6 +34,8 @@ class DataSourceInfo:
     unassigned_pct: float
     date_field_used: Optional[str] = None
     fallback_date_count: int = 0
+    # Why the live tier was skipped (shown in the UI when on snapshot/demo tiers)
+    live_error: Optional[str] = None
 
 
 def load(
@@ -74,6 +76,7 @@ def load(
                 return df, info
 
     # --- Tier 1: live API ---
+    live_error = None
     try:
         source = CMPDSource(city)
         df = source.fetch(start, end, retrieved_at=retrieved_at)
@@ -83,7 +86,9 @@ def load(
             df = _filter(df, start, end, categories)
             df, info = _finalize(df, "live", retrieved_at.isoformat())
             return df, info
+        live_error = "Live API returned 0 records for the requested range"
     except Exception as exc:
+        live_error = str(exc)
         logger.warning("Live CMPD fetch failed (%s); trying snapshot cache", exc)
 
     # --- Tier 2: latest snapshot ---
@@ -93,6 +98,7 @@ def load(
         snaps = cache.list_snapshots(city.slug, source_slug)
         snap_ts = snaps[0]["retrieved_at"] if snaps else "cached"
         df, info = _finalize(df, "snapshot", snap_ts)
+        info.live_error = live_error
         return df, info
 
     # --- Tier 3: synthetic demo ---
@@ -102,6 +108,7 @@ def load(
     df, boundaries = assign_geography(df, city)
     df = _filter(df, start, end, categories)
     df, info = _finalize(df, "demo", retrieved_at.isoformat())
+    info.live_error = live_error
     return df, info
 
 

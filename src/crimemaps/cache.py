@@ -115,6 +115,33 @@ def find_covering(
     return None
 
 
+def prune_old(city_slug: str, source_slug: str, keep: int = 1) -> int:
+    """
+    Delete all but the newest `keep` snapshots for a source and rewrite the
+    manifest to match. Used by the scheduled data-refresh job so committed
+    snapshots don't accumulate. Returns the number of snapshots removed.
+    """
+    import shutil
+
+    snaps = list_snapshots(city_slug, source_slug)
+    if len(snaps) <= keep:
+        return 0
+
+    kept, removed = snaps[:keep], snaps[keep:]
+    for snap in removed:
+        snap_dir = (_BASE / snap["parquet"]).parent
+        if snap_dir.exists():
+            shutil.rmtree(snap_dir)
+            logger.info("Pruned snapshot %s", snap_dir)
+
+    manifest_path = _cache_dir(city_slug, source_slug) / "manifest.jsonl"
+    with open(manifest_path, "w") as f:
+        # manifest is stored oldest-first on disk; kept is newest-first
+        for entry in reversed(kept):
+            f.write(json.dumps(entry) + "\n")
+    return len(removed)
+
+
 def load_latest(city_slug: str, source_slug: str) -> Optional[pd.DataFrame]:
     """Load the most recent snapshot, or None if no snapshots exist."""
     snaps = list_snapshots(city_slug, source_slug)

@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 import requests
 
-from crimemaps import schema
+from crimemaps import http, schema
 from crimemaps.config import CityConfig
 from crimemaps.sources.base import MeasureSource
 
@@ -54,7 +54,7 @@ class CMPDSource(MeasureSource):
     def __init__(self, city: CityConfig, session: Optional[requests.Session] = None):
         super().__init__(city)
         self.source_slug = city.incident_source_slug
-        self._session = session or requests.Session()
+        self._session = session or http.make_session()
         self._validated_fields: Optional[Dict[str, Any]] = None
 
     # ------------------------------------------------------------------
@@ -186,10 +186,17 @@ class CMPDSource(MeasureSource):
                 data = resp.json()
             except Exception as exc:
                 logger.error("CMPD page %d fetch error: %s", page_num, exc)
+                if page_num == 0:
+                    # First-page failure means the endpoint is unreachable/blocked —
+                    # raise so the loader can report the real cause instead of
+                    # silently returning 0 records.
+                    raise
                 break
 
             if "error" in data:
                 logger.error("ArcGIS error response: %s", data["error"])
+                if page_num == 0:
+                    raise RuntimeError(f"ArcGIS error response: {data['error']}")
                 break
 
             page_features = data.get("features", [])
