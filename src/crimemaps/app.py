@@ -103,11 +103,11 @@ with st.sidebar:
 
     prefer_cache = st.toggle(
         "Prefer cached data (faster)",
-        value=False,
+        value=True,
         help=(
             "Serve the request from an existing snapshot that covers the selected "
-            "range instead of re-querying the live API. Recommended for multi-year "
-            "ranges after the first pull."
+            "range instead of re-querying the live API. Snapshots are refreshed "
+            "nightly by a scheduled job. Turn off to force a live API pull."
         ),
     )
 
@@ -237,9 +237,18 @@ col_d.metric("Date range", f"{start.date()} → {end.date()}")
 
 if info.tier == "demo":
     st.warning(
-        "⚠️ **Synthetic data only.** The live CMPD API is unreachable and no cached "
+        "⚠️ **Synthetic data only.** The live incidents API is unreachable and no cached "
         "snapshot was found. All counts and rates are fabricated for UI testing."
     )
+    if info.live_error:
+        with st.expander("Why did the live fetch fail?"):
+            st.code(info.live_error, language=None)
+elif info.tier == "snapshot" and info.live_error:
+    st.info(
+        "ℹ️ Serving cached snapshot — the live API was unreachable on this request."
+    )
+    with st.expander("Live fetch error"):
+        st.code(info.live_error, language=None)
 
 # ---------------------------------------------------------------------------
 # Compute tract aggregates

@@ -39,6 +39,7 @@ import numpy as np
 import pandas as pd
 import requests
 
+from crimemaps import http
 from crimemaps.config import CityConfig
 
 logger = logging.getLogger(__name__)
@@ -133,7 +134,7 @@ class CFSSource:
         if city.cfs is None:
             raise ValueError(f"City '{city.slug}' has no calls-for-service endpoint configured")
         self.city = city
-        self._session = session or requests.Session()
+        self._session = session or http.make_session()
 
     def fetch(
         self,

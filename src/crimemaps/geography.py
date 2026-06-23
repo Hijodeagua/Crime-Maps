@@ -27,7 +27,7 @@ import requests
 from pyproj import Transformer
 from shapely.geometry import Point
 
-from crimemaps import schema
+from crimemaps import http, schema
 from crimemaps.config import CityConfig
 
 logger = logging.getLogger(__name__)
@@ -87,7 +87,7 @@ def _fetch_boundaries(city: CityConfig) -> Optional[gpd.GeoDataFrame]:
             "f": "geojson",
             "returnGeometry": "true",
         }
-        resp = requests.get(url, params=params, timeout=_REQUEST_TIMEOUT)
+        resp = http.get(url, params=params, timeout=_REQUEST_TIMEOUT)
         resp.raise_for_status()
         gdf = gpd.read_file(resp.text, driver="GeoJSON")
         logger.info("Fetched %d tract boundaries from TIGERweb", len(gdf))
