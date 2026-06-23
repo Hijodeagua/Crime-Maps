@@ -162,6 +162,34 @@ The active tier and unassigned-incident rate are displayed in the UI header.
 
 ---
 
+## Deployment & keeping the app awake
+
+The app is deployed on **Streamlit Community Cloud** at
+<https://tre-crime-maps.streamlit.app> and linked from the whosyurgoat hub.
+
+**Real data on a blocked host.** Streamlit Cloud (and some city ArcGIS WAFs)
+can't always reach the live endpoints, so a scheduled GitHub Action
+(`.github/workflows/refresh-data.yml`) fetches real data from GitHub's runners
+and commits snapshots into `data/cache/`. The deployed app clones the repo and
+serves those snapshots via the **Snapshot** tier — the repo acts as a data relay.
+Run it on demand from **Actions → "Refresh data snapshots" → Run workflow**, or
+let the nightly schedule handle it. (Set a `CENSUS_API_KEY` repo secret to avoid
+ACS rate limits.)
+
+**Sleep / cold starts.** Free Streamlit Cloud apps sleep after a stretch of no
+traffic and show a "waking up" screen on the next visit. Two ways to keep it warm:
+
+1. **`.github/workflows/keep-warm.yml`** (in this repo) pings the app every ~10
+   minutes. Zero setup, but GitHub cron is best-effort and auto-disables after 60
+   days of repo inactivity.
+2. **UptimeRobot** (recommended for reliability) — a free HTTP monitor on the
+   same URL at a 5-minute interval keeps the app awake and alerts on downtime.
+
+Truly always-on (no sleep at all) requires a non-free host — e.g. Render,
+Railway, Fly.io, or a small VPS running `streamlit run`.
+
+---
+
 ## Adding a city
 
 1. Add a `CityConfig` entry to `src/crimemaps/config.py` with the city's ArcGIS

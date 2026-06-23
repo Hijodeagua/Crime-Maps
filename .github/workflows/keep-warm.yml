@@ -1,0 +1,43 @@
+# Keep the Streamlit Community Cloud app awake.
+#
+# Free Streamlit Cloud apps go to sleep after a stretch of no traffic and show
+# a "waking up" cold-start screen on the next visit. A periodic GET counts as
+# traffic and resets that timer, so visitors land on a warm app.
+#
+# Caveat: GitHub's scheduled runs are best-effort — they can be delayed by 5-15
+# minutes under load and are auto-disabled after 60 days with no repo activity.
+# For rock-solid uptime use an external monitor (e.g. a free UptimeRobot HTTP
+# monitor on the same URL, 5-minute interval); this workflow is the zero-setup
+# baseline. See README "Keeping the app awake".
+
+name: Keep app warm
+
+on:
+  schedule:
+    - cron: "*/10 * * * *" # every 10 minutes (best-effort)
+  workflow_dispatch:
+
+# Don't pile up runs if one is slow/delayed.
+concurrency:
+  group: keep-warm
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping the app
+        run: |
+          URL="https://tre-crime-maps.streamlit.app/"
+          code=$(curl -sSL -o /dev/null -w "%{http_code}" \
+            -A "Mozilla/5.0 (keep-warm; +github-actions)" \
+            --max-time 60 "$URL" || echo "000")
+          echo "GET $URL -> HTTP $code"
+          # A reachable app returns 200; the cold-start interstitial also
+          # returns 200. Treat anything 2xx/3xx as success; don't fail the
+          # whole workflow on a transient blip.
+          case "$code" in
+            2*|3*) echo "App is reachable." ;;
+            *) echo "::warning::Unexpected status $code (may be a transient cold start)" ;;
+          esac

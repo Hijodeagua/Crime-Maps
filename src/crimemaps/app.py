@@ -5,6 +5,7 @@ Run with:  streamlit run src/crimemaps/app.py
 """
 
 import logging
+import random
 import sys
 from pathlib import Path
 
@@ -200,7 +201,18 @@ def cached_boundaries(city_slug: str):
     return load_boundaries(CITIES[city_slug])
 
 
-with st.spinner("Loading incident data…"):
+# A little personality while data loads (a multi-year pull can take a beat).
+_LOADING_QUIPS = (
+    "Dusting for prints…",
+    "Canvassing the neighborhood…",
+    "Pulling the case files…",
+    "Connecting the red string…",
+    "Following the data trail…",
+    "Triangulating hotspots…",
+    "Checking the precinct logs…",
+)
+
+with st.spinner(random.choice(_LOADING_QUIPS)):
     df, info = cached_load(
         city_slug,
         start.isoformat(),

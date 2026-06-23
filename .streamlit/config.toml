@@ -1,0 +1,18 @@
+# Crime Maps theme — dark "neon arcade" look matching the whosyurgoat hub,
+# with the crime-maps red (#ff4d6d) as the accent. Streamlit applies this to
+# every widget, so the app reads as on-brand the instant it paints.
+[theme]
+base = "dark"
+primaryColor = "#ff4d6d"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#1a1d27"
+textColor = "#e6e8ef"
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false
+
+[client]
+# Hide the long Python tracebacks from end users; errors are still logged
+# server-side. Surfaced data problems use the in-app banner instead.
+showErrorDetails = false
