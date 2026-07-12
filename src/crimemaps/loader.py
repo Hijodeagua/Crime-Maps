@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 
 TZ_LOCAL = "America/New_York"
 
+# Data older than this is flagged as stale in DataSourceInfo (and the app
+# shows a warning banner). The nightly refresh runs daily, so anything past
+# 48h means at least two consecutive refresh runs failed to land.
+STALE_AFTER_HOURS = 48
+
 
 @dataclass
 class DataSourceInfo:
@@ -36,6 +41,32 @@ class DataSourceInfo:
     fallback_date_count: int = 0
     # Why the live tier was skipped (shown in the UI when on snapshot/demo tiers)
     live_error: Optional[str] = None
+    # Set when a live fetch succeeded but pagination failed partway — the
+    # data shown is real but incomplete (see sources/*.partial_error)
+    partial_error: Optional[str] = None
+    # Age of the data (hours since retrieved_at); None if unknown
+    age_hours: Optional[float] = None
+    is_stale: bool = False
+
+
+def data_age_hours(
+    retrieved_at: Optional[str],
+    now: Optional[pd.Timestamp] = None,
+) -> Optional[float]:
+    """Hours elapsed since retrieved_at (ISO string), or None if unparseable."""
+    if not retrieved_at:
+        return None
+    try:
+        ts = pd.Timestamp(retrieved_at)
+    except (ValueError, TypeError):
+        return None
+    if pd.isna(ts):
+        return None
+    if ts.tz is None:
+        ts = ts.tz_localize(TZ_LOCAL)
+    if now is None:
+        now = pd.Timestamp.now(tz=TZ_LOCAL)
+    return max((now - ts).total_seconds() / 3600.0, 0.0)
 
 
 def load(
@@ -82,9 +113,17 @@ def load(
         df = source.fetch(start, end, retrieved_at=retrieved_at)
         if df is not None and not df.empty:
             df, boundaries = assign_geography(df, city)
-            cache.save(df, city.slug, source.source_slug, retrieved_at, start, end)
+            if source.partial_error:
+                # Don't snapshot incomplete pulls — prune_old(keep=1) would
+                # replace a complete snapshot with a truncated one.
+                logger.warning(
+                    "Live fetch was partial; not caching: %s", source.partial_error
+                )
+            else:
+                cache.save(df, city.slug, source.source_slug, retrieved_at, start, end)
             df = _filter(df, start, end, categories)
             df, info = _finalize(df, "live", retrieved_at.isoformat())
+            info.partial_error = source.partial_error
             return df, info
         live_error = "Live API returned 0 records for the requested range"
     except Exception as exc:
@@ -144,12 +183,15 @@ def _finalize(
     else:
         n_unassigned = 0
     pct = 100.0 * n_unassigned / n if n else 0.0
+    age = data_age_hours(retrieved_at)
     info = DataSourceInfo(
         tier=tier,
         retrieved_at=retrieved_at,
         row_count=n,
         unassigned_count=int(n_unassigned),
         unassigned_pct=round(pct, 1),
+        age_hours=age,
+        is_stale=age is not None and age > STALE_AFTER_HOURS,
     )
     return df, info
 
@@ -171,10 +213,21 @@ def load_cfs(
 
     if city.cfs is not None:
         try:
-            df = cfs_source.CFSSource(city).fetch(start, end, retrieved_at=retrieved_at)
+            source = cfs_source.CFSSource(city)
+            df = source.fetch(start, end, retrieved_at=retrieved_at)
             if df is not None and not df.empty:
-                cache.save(df, city.slug, slug, retrieved_at, start, end)
-                return _finalize_cfs(df, "live", retrieved_at.isoformat())
+                if source.partial_error:
+                    # Don't snapshot incomplete pulls — prune_old(keep=1) would
+                    # replace a complete snapshot with a truncated one.
+                    logger.warning(
+                        "Live CFS fetch was partial; not caching: %s",
+                        source.partial_error,
+                    )
+                else:
+                    cache.save(df, city.slug, slug, retrieved_at, start, end)
+                df, info = _finalize_cfs(df, "live", retrieved_at.isoformat())
+                info.partial_error = source.partial_error
+                return df, info
         except Exception as exc:
             logger.warning("Live CFS fetch failed (%s); trying snapshot cache", exc)
 
@@ -199,11 +252,14 @@ def _tz(ts: pd.Timestamp) -> pd.Timestamp:
 def _finalize_cfs(df: pd.DataFrame, tier: str, retrieved_at: str) -> tuple[pd.DataFrame, DataSourceInfo]:
     n = len(df)
     n_unmapped = int((df["lat"].isna() | (df["lat"] == 0.0)).sum()) if n else 0
+    age = data_age_hours(retrieved_at)
     info = DataSourceInfo(
         tier=tier,
         retrieved_at=retrieved_at,
         row_count=n,
         unassigned_count=n_unmapped,
         unassigned_pct=round(100.0 * n_unmapped / n, 1) if n else 0.0,
+        age_hours=age,
+        is_stale=age is not None and age > STALE_AFTER_HOURS,
     )
     return df, info

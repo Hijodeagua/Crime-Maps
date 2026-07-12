@@ -112,6 +112,112 @@ class TestParse:
             cfs.CFSSource(RALEIGH)
 
 
+class _FakeResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._payload
+
+
+class _FakeSession:
+    """Serves a scripted sequence of ArcGIS JSON payloads."""
+
+    def __init__(self, payloads):
+        self.payloads = list(payloads)
+        self.calls = 0
+
+    def get(self, url, params=None, timeout=None):
+        payload = self.payloads[self.calls]
+        self.calls += 1
+        return _FakeResponse(payload)
+
+
+def _feature(i):
+    return {"attributes": {"OBJECTID": i}, "geometry": {"x": -80.8, "y": 35.2}}
+
+
+class TestPartialPagination:
+    FIELDS = {
+        "event_datetime": "CALL_RECEIVED_DT",
+        "call_type": None,
+        "address": None,
+        "division": None,
+        "record_id": "OBJECTID",
+        "lat": None,
+        "lon": None,
+    }
+    START = pd.Timestamp("2024-06-01", tz="America/New_York")
+    END = pd.Timestamp("2024-06-02", tz="America/New_York")
+
+    def test_mid_pagination_error_returns_partial_and_sets_flag(self, monkeypatch):
+        monkeypatch.setattr(cfs, "_PAGE_SIZE", 2)
+        session = _FakeSession([
+            {"features": [_feature(1), _feature(2)], "exceededTransferLimit": True},
+            {"error": {"code": 500, "message": "boom"}},
+        ])
+        source = cfs.CFSSource(CHARLOTTE, session=session)
+        features = source._paginate(self.FIELDS, self.START, self.END)
+
+        assert len(features) == 2, "page-0 results must be kept"
+        assert source.partial_error is not None
+        assert "page 1" in source.partial_error
+
+    def test_mid_pagination_exception_returns_partial_and_sets_flag(self, monkeypatch):
+        monkeypatch.setattr(cfs, "_PAGE_SIZE", 2)
+
+        class ExplodingSession(_FakeSession):
+            def get(self, url, params=None, timeout=None):
+                if self.calls >= 1:
+                    raise ConnectionError("reset by peer")
+                return super().get(url, params=params, timeout=timeout)
+
+        session = ExplodingSession([
+            {"features": [_feature(1), _feature(2)], "exceededTransferLimit": True},
+        ])
+        source = cfs.CFSSource(CHARLOTTE, session=session)
+        features = source._paginate(self.FIELDS, self.START, self.END)
+
+        assert len(features) == 2
+        assert source.partial_error is not None
+        assert "reset by peer" in source.partial_error
+
+    def test_first_page_error_raises(self, monkeypatch):
+        monkeypatch.setattr(cfs, "_PAGE_SIZE", 2)
+        session = _FakeSession([{"error": {"code": 403, "message": "blocked"}}])
+        source = cfs.CFSSource(CHARLOTTE, session=session)
+        with pytest.raises(RuntimeError, match="blocked"):
+            source._paginate(self.FIELDS, self.START, self.END)
+
+    def test_complete_pagination_leaves_flag_unset(self, monkeypatch):
+        monkeypatch.setattr(cfs, "_PAGE_SIZE", 2)
+        session = _FakeSession([
+            {"features": [_feature(1), _feature(2)], "exceededTransferLimit": True},
+            {"features": [_feature(3)]},
+        ])
+        source = cfs.CFSSource(CHARLOTTE, session=session)
+        features = source._paginate(self.FIELDS, self.START, self.END)
+        assert len(features) == 3
+        assert source.partial_error is None
+
+    def test_fetch_resets_partial_error_between_calls(self, monkeypatch):
+        monkeypatch.setattr(cfs, "_PAGE_SIZE", 2)
+        epoch_ms = int(pd.Timestamp("2024-06-01 12:00", tz="UTC").value // 1_000_000)
+        meta = {"fields": [{"name": "CALL_RECEIVED_DT", "type": "esriFieldTypeDate"}]}
+        page = {"features": [
+            {"attributes": {"CALL_RECEIVED_DT": epoch_ms}, "geometry": {"x": -80.8, "y": 35.2}},
+        ]}
+        session = _FakeSession([meta, page])
+        source = cfs.CFSSource(CHARLOTTE, session=session)
+        source.partial_error = "stale flag from an earlier failed fetch"
+        df = source.fetch(self.START, self.END)
+        assert source.partial_error is None
+        assert len(df) == 1
+
+
 class TestDemoCFS:
     def test_generates_calls_within_window(self):
         start = pd.Timestamp("2024-06-01", tz="America/New_York")

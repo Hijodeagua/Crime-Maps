@@ -22,7 +22,7 @@ import crimemaps.intensity as intensity
 from crimemaps import aggregate, cache, streetmap
 from crimemaps.config import CITIES, CityConfig
 from crimemaps.geography import assign_geography, load_boundaries
-from crimemaps.loader import DataSourceInfo, load, load_cfs
+from crimemaps.loader import STALE_AFTER_HOURS, DataSourceInfo, load, load_cfs
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -236,6 +236,13 @@ source_labels = {"live": "🟢 Live CMPD API", "snapshot": "🟡 Cached snapshot
 source_label = source_labels.get(info.tier, info.tier)
 snap_note = f" (pinned: {info.retrieved_at[:19]})" if info.retrieved_at else ""
 
+
+def _format_age(hours: float) -> str:
+    """Human-readable data age: '31 hours' below 2 days, '3.5 days' above."""
+    if hours < 48:
+        return f"{hours:.0f} hours"
+    return f"{hours / 24:.1f} days"
+
 col_a, col_b, col_c, col_d = st.columns(4)
 col_a.metric("Data source", source_labels.get(info.tier, info.tier))
 col_b.metric("Incidents loaded", f"{info.row_count:,}")
@@ -261,6 +268,25 @@ elif info.tier == "snapshot" and info.live_error:
     )
     with st.expander("Live fetch error"):
         st.code(info.live_error, language=None)
+
+if info.partial_error:
+    st.warning(
+        "⚠️ **Incomplete data.** The live fetch failed partway through "
+        "pagination, so recent counts may be understated."
+    )
+    with st.expander("What went wrong mid-fetch?"):
+        st.code(info.partial_error, language=None)
+
+# Staleness banner — amber, separate from the tier banner above: the tier says
+# where the data came from; this says the newest data is older than the
+# refresh cadence should ever allow (see loader.STALE_AFTER_HOURS).
+if info.is_stale and info.age_hours is not None:
+    st.warning(
+        f"🟠 **Stale data.** The newest available data was retrieved "
+        f"**{_format_age(info.age_hours)} ago** (threshold: "
+        f"{STALE_AFTER_HOURS}h). The nightly refresh may be failing — check the "
+        "repository's Actions tab."
+    )
 
 # ---------------------------------------------------------------------------
 # Compute tract aggregates
@@ -510,6 +536,21 @@ with tab_live:
             "⚠️ **Synthetic feed.** The live calls-for-service endpoint is unreachable "
             "(or not configured for this city) and no snapshot exists. Calls below are "
             "fabricated for UI testing."
+        )
+
+    if cfs_info.partial_error:
+        st.warning(
+            "⚠️ **Incomplete feed.** The live dispatch fetch failed partway "
+            "through pagination, so some calls in the window may be missing."
+        )
+        with st.expander("What went wrong mid-fetch?"):
+            st.code(cfs_info.partial_error, language=None)
+
+    if cfs_info.is_stale and cfs_info.age_hours is not None:
+        st.warning(
+            f"🟠 **Stale feed.** The newest available dispatch data was retrieved "
+            f"**{_format_age(cfs_info.age_hours)} ago** — this is not a live view "
+            "of current activity."
         )
 
     if cfs_df.empty:
