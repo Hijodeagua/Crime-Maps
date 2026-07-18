@@ -135,6 +135,9 @@ class CFSSource:
             raise ValueError(f"City '{city.slug}' has no calls-for-service endpoint configured")
         self.city = city
         self._session = session or http.make_session()
+        # Set by fetch(): a human-readable reason when pagination failed
+        # partway and the returned DataFrame is incomplete; None otherwise.
+        self.partial_error: Optional[str] = None
 
     def fetch(
         self,
@@ -144,6 +147,7 @@ class CFSSource:
     ) -> pd.DataFrame:
         if retrieved_at is None:
             retrieved_at = pd.Timestamp.now(tz=TZ_LOCAL)
+        self.partial_error = None
 
         fields = self._resolve_live_fields()
         if fields["event_datetime"] is None:
@@ -183,6 +187,15 @@ class CFSSource:
         start: pd.Timestamp,
         end: pd.Timestamp,
     ) -> List[Dict[str, Any]]:
+        """
+        Page through the CFS query endpoint.
+
+        A failure on the FIRST page raises (the endpoint is unreachable or
+        rejecting us — the loader should fall back to snapshot/demo tiers).
+        A failure on a LATER page returns what was fetched so far and records
+        the reason in self.partial_error, so callers can surface that the
+        result is incomplete instead of treating it as a full pull.
+        """
         date_field = fields["event_datetime"]
         start_ms = int(start.value // 1_000_000)
         end_ms = int(end.value // 1_000_000)
@@ -202,13 +215,30 @@ class CFSSource:
                 "resultRecordCount": _PAGE_SIZE,
                 "f": "json",
             }
-            resp = self._session.get(
-                self.city.cfs.query_url, params=params, timeout=_REQUEST_TIMEOUT
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            try:
+                resp = self._session.get(
+                    self.city.cfs.query_url, params=params, timeout=_REQUEST_TIMEOUT
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            except Exception as exc:
+                logger.error("CFS page %d fetch error: %s", page_num, exc)
+                if page_num == 0:
+                    raise
+                self.partial_error = (
+                    f"CFS pagination failed at page {page_num} "
+                    f"({len(features)} calls fetched before the error): {exc}"
+                )
+                break
+
             if "error" in data:
                 logger.error("ArcGIS CFS error response: %s", data["error"])
+                if page_num == 0:
+                    raise RuntimeError(f"ArcGIS CFS error response: {data['error']}")
+                self.partial_error = (
+                    f"ArcGIS returned an error at page {page_num} "
+                    f"({len(features)} calls fetched before the error): {data['error']}"
+                )
                 break
 
             page_features = data.get("features", [])
@@ -220,6 +250,10 @@ class CFSSource:
             offset += _PAGE_SIZE
         else:
             logger.warning("CFS: reached max pages (%d); results truncated", _MAX_PAGES)
+            self.partial_error = (
+                f"Hit the {_MAX_PAGES}-page safety cap; results are truncated "
+                f"at {len(features)} calls"
+            )
         return features
 
     def _parse(

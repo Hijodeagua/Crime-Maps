@@ -1,5 +1,7 @@
-data/cache/
-!data/cache/.gitkeep
+# NOTE: data/cache/ must stay tracked. The nightly refresh workflow commits
+# snapshots there, and deployments that cannot reach the city APIs (e.g.
+# Streamlit Community Cloud behind a WAF) serve real data from those committed
+# snapshots. Ignoring it silently breaks the data relay (see tests/test_relay.py).
 __pycache__/
 *.pyc
 *.pyo
@@ -11,4 +13,3 @@ dist/
 build/
 .pytest_cache/
 .mypy_cache/
-# Cache parquet is covered by data/cache/ above; fixtures must be tracked.

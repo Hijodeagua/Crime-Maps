@@ -56,6 +56,9 @@ class CMPDSource(MeasureSource):
         self.source_slug = city.incident_source_slug
         self._session = session or http.make_session()
         self._validated_fields: Optional[Dict[str, Any]] = None
+        # Set by fetch(): a human-readable reason when pagination failed
+        # partway and the returned DataFrame is incomplete; None otherwise.
+        self.partial_error: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -70,6 +73,7 @@ class CMPDSource(MeasureSource):
         """Fetch CMPD incidents in [start, end] and return a canonical DataFrame."""
         if retrieved_at is None:
             retrieved_at = pd.Timestamp.now(tz=TZ_LOCAL)
+        self.partial_error = None
 
         date_field, fallback_field = self._resolve_date_fields()
         logger.info(
@@ -191,12 +195,20 @@ class CMPDSource(MeasureSource):
                     # raise so the loader can report the real cause instead of
                     # silently returning 0 records.
                     raise
+                self.partial_error = (
+                    f"Pagination failed at page {page_num} "
+                    f"({len(features)} records fetched before the error): {exc}"
+                )
                 break
 
             if "error" in data:
                 logger.error("ArcGIS error response: %s", data["error"])
                 if page_num == 0:
                     raise RuntimeError(f"ArcGIS error response: {data['error']}")
+                self.partial_error = (
+                    f"ArcGIS returned an error at page {page_num} "
+                    f"({len(features)} records fetched before the error): {data['error']}"
+                )
                 break
 
             page_features = data.get("features", [])
@@ -213,6 +225,10 @@ class CMPDSource(MeasureSource):
 
         else:
             logger.warning("Reached max pages (%d); results may be truncated", _MAX_PAGES)
+            self.partial_error = (
+                f"Hit the {_MAX_PAGES}-page safety cap; results are truncated "
+                f"at {len(features)} records"
+            )
 
         return features
 
@@ -232,9 +248,15 @@ class CMPDSource(MeasureSource):
             attrs = feat.get("attributes", {})
             geo = feat.get("geometry") or {}
 
-            # Coordinates: prefer geometry block, fall back to lat/lon attribute fields
-            lon = geo.get("x") or attrs.get(fm.lon)
-            lat = geo.get("y") or attrs.get(fm.lat)
+            # Coordinates: prefer geometry block, fall back to lat/lon attribute
+            # fields. Explicit None checks — `or` would treat a legitimate 0.0
+            # coordinate as missing.
+            lon = geo.get("x")
+            if lon is None:
+                lon = attrs.get(fm.lon)
+            lat = geo.get("y")
+            if lat is None:
+                lat = attrs.get(fm.lat)
 
             # Date: occurrence preferred, fall back to report per-record
             epoch_ms = attrs.get(date_field)

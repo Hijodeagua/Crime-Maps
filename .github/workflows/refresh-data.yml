@@ -49,14 +49,24 @@ jobs:
           if [ -n "${{ inputs.days }}" ]; then EXTRA="--days ${{ inputs.days }}"; fi
           python scripts/refresh_data.py $EXTRA
 
+      # A successful refresh always writes at least one new timestamped
+      # snapshot directory, so "nothing staged" here can only mean the relay
+      # is broken (e.g. data/cache gitignored again, or the refresh script
+      # wrote somewhere the app doesn't read). Fail loudly instead of
+      # silently shipping stale/fixture data — this exact failure mode once
+      # made every nightly run a no-op for months.
       - name: Commit snapshots
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git check-ignore -q data/cache; then
+            echo "::error::data/cache is gitignored — snapshots can never be committed. Fix .gitignore."
+            exit 1
+          fi
           git add data/cache
           if git diff --cached --quiet; then
-            echo "No data changes to commit."
-          else
-            git commit -m "Refresh data snapshots ($(date -u +%F))"
-            git push
+            echo "::error::Refresh succeeded but staged no snapshot changes under data/cache — the data relay is broken."
+            exit 1
           fi
+          git commit -m "Refresh data snapshots ($(date -u +%F))"
+          git push

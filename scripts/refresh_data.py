@@ -63,6 +63,10 @@ def refresh_city(slug: str, days: int, prune: bool) -> bool:
         df = source.fetch(start, now, retrieved_at=now)
         if df.empty:
             raise RuntimeError("live fetch returned 0 records")
+        if source.partial_error:
+            # A truncated pull must not become the snapshot the deployed app
+            # serves (prune keeps only the newest snapshot per source).
+            raise RuntimeError(f"live fetch was partial: {source.partial_error}")
         df, _ = assign_geography(df, city)
         cache.save(df, city.slug, source.source_slug, now, start, now)
         logger.info("[%s] incidents: %d rows (%s → %s)", slug, len(df), start.date(), now.date())
@@ -78,7 +82,10 @@ def refresh_city(slug: str, days: int, prune: bool) -> bool:
     if city.cfs is not None:
         try:
             cfs_start = now - pd.Timedelta(days=CFS_LOOKBACK_DAYS)
-            cdf = cfs_source.CFSSource(city).fetch(cfs_start, now, retrieved_at=now)
+            cfs_src = cfs_source.CFSSource(city)
+            cdf = cfs_src.fetch(cfs_start, now, retrieved_at=now)
+            if cfs_src.partial_error:
+                raise RuntimeError(f"CFS fetch was partial: {cfs_src.partial_error}")
             if not cdf.empty:
                 cache.save(cdf, city.slug, cfs_source.SOURCE_SLUG, now, cfs_start, now)
                 logger.info("[%s] calls-for-service: %d rows", slug, len(cdf))
