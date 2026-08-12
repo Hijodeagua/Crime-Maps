@@ -80,9 +80,10 @@ def load_cells(res: int = H3_RES) -> dict:
 
 def assign(df, cells: list[str], res: int = H3_RES):
     """Map incident lat/lon -> H3 cell; drop points outside the boundary."""
+    from data_pull import LAT, LON
     cell_set = set(cells)
     ids = [h3.latlng_to_cell(la, lo, res)
-           for la, lo in zip(df["Latitude"], df["Longitude"])]
+           for la, lo in zip(df[LAT], df[LON])]
     df = df.assign(cell=ids)
     inside = df["cell"].isin(cell_set)
     return df[inside], round(100 * (1 - inside.mean()), 2)

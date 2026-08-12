@@ -1,18 +1,51 @@
-"""Unit tests for audits.py with hand-computed expectations."""
+"""Unit tests for audits.py and the pull degradation policy, with
+hand-computed expectations."""
 import numpy as np
 import pandas as pd
 import pytest
 
-from audits import (aoristic_daily_weights, coordinate_audit, temporal_audit,
-                    RES9_EDGE_M)
+from audits import (aoristic_daily_weights, coordinate_audit,
+                    quantization_check, temporal_audit, RES9_EDGE_M)
+from data_pull import (partition_fields, LAT, LON, REQUIRED_FIELDS,
+                       OPTIONAL_FIELDS)
 
 
 def _df(lats, lons, strata, begins, ends):
     return pd.DataFrame({
-        "Latitude": lats, "Longitude": lons, "stratum": strata,
+        LAT: lats, LON: lons, "stratum": strata,
         "DATE_INCIDENT_BEGAN": pd.to_datetime(begins),
         "DATE_INCIDENT_END": pd.to_datetime(ends),
     })
+
+
+def test_partition_fields_aborts_on_missing_required():
+    live = set(REQUIRED_FIELDS + OPTIONAL_FIELDS) - {LAT}
+    with pytest.raises(RuntimeError, match="REQUIRED.*LATITUDE_PUBLIC"):
+        partition_fields(live)
+    live = set(REQUIRED_FIELDS + OPTIONAL_FIELDS) - {"HIGHEST_NIBRS_CODE"}
+    with pytest.raises(RuntimeError, match="REQUIRED"):
+        partition_fields(live)
+
+
+def test_partition_fields_degrades_on_missing_optional(capsys):
+    live = set(REQUIRED_FIELDS + OPTIONAL_FIELDS) - {"DATE_INCIDENT_END", "NPA"}
+    got = partition_fields(live)
+    assert "DATE_INCIDENT_END" not in got and "NPA" not in got
+    assert all(f in got for f in REQUIRED_FIELDS)
+    assert "WARNING" in capsys.readouterr().out
+
+
+def test_quantization_detects_lattice():
+    rng = np.random.default_rng(5)
+    # coarse lattice: every value on a 0.002-deg grid (~222 m in lat)
+    coarse = 35.2 + 0.002 * rng.integers(0, 200, 4000)
+    q = quantization_check(coarse, 111320.0)
+    assert q["lattice_detected"] is True
+    assert q["pitch_m"] == pytest.approx(222.6, abs=1.0)
+    # smooth scatter: no dominant gap at meaningful pitch
+    smooth = 35.2 + rng.uniform(0, 0.4, 4000)
+    q2 = quantization_check(smooth, 111320.0)
+    assert q2["lattice_detected"] is False
 
 
 def test_coordinate_audit_counts_and_decision(tmp_path, monkeypatch):

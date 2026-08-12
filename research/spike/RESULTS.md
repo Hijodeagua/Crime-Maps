@@ -31,10 +31,32 @@ reachable (from WSL, or from a session whose environment allows them).
   target environment (py3.11/numpy2). Recommend demoting tick from TRIAL
   unless pinning an old numpy is acceptable.
 
-## Step 1 — data: BLOCKED (environment, not the data)
+## Step 1 — data: STILL BLOCKED (environment, not the data)
 
-The sandbox's egress policy denies CONNECT to every required host (gateway
-403, confirmed for both shell tools and the WebFetch tool):
+2026-08-12: the live pull itself (`data_pull.py --precheck`, first request
+of the run) failed with `Tunnel connection failed: 403 Forbidden` from the
+egress gateway — the allowlist has not changed. The layer-schema fixes
+below are in place and unit-tested; the pipeline remains one command away
+once the host is reachable.
+
+Schema adopted from the confirmed live layer: coordinates are
+`LATITUDE_PUBLIC`/`LONGITUDE_PUBLIC` (state-plane `X_COORD_PUBLIC`/
+`Y_COORD_PUBLIC` unused, `returnGeometry=false` kept); added
+`ADDRESS_DESCRIPTION`, `LOCATION_TYPE_DESCRIPTION`, `NPA`. Degradation
+policy split: coordinates, `DATE_INCIDENT_BEGAN`, `HIGHEST_NIBRS_CODE`
+(and `OBJECTID`) are REQUIRED — the pull aborts if any is absent
+(test-covered); only `DATE_INCIDENT_END` and descriptive fields may degrade
+with a warning. Pagination: `--precheck` reads `maxRecordCount` +
+`advancedQueryCapabilities.supportsPagination` and the pull falls back to
+OBJECTID-keyset paging when offset pagination is unsupported; total row
+count and occurred-date min/max are confirmed via `returnCountOnly` /
+`outStatistics` before the multi-year pull. Timezone: epoch-ms decode is
+verified empirically by `--tzcheck` before pulling (see run order below);
+the adopted interpretation is recorded in the Step 1 report
+(`tz_interpretation`).
+
+The egress policy denies CONNECT to every required host (gateway 403,
+confirmed for both shell tools and the WebFetch tool):
 
 | Host | Needed for |
 |---|---|
@@ -82,13 +104,20 @@ the data is reachable.
 Reports per stratum: distinct coordinate pairs vs total incidents; top 20
 most frequent coordinates with counts and share; median nearest-neighbor
 distance between distinct points (local equirectangular projection).
-**Decision rule (mechanical):** res 9 stays primary iff the median NN
-distance between distinct points is **below** the res-9 mean edge length
-(174.4 m); otherwise the data's effective precision is coarser than res 9,
-**res 8 becomes primary**, and res 9 is kept only as a labeled sensitivity
-run (`walkforward.py --res 9 --tag res9-sensitivity`). Expectation to
-verify, not assume: CMPD geocodes to block level, so res 8 primary is the
-likely outcome.
+Coordinates are `LATITUDE_PUBLIC`/`LONGITUDE_PUBLIC` — the `_PUBLIC` suffix
+means deliberately generalized publication coordinates, so two additional
+checks run:
+(a) **Quantization**: modal gap between consecutive distinct values per
+axis + fractional-part occupancy; a lattice is declared when the modal gap
+carries >= 30% of gap mass at a pitch >= half the res-9 edge (~87 m).
+(b) **Address granularity**: 50 sampled `ADDRESS_DESCRIPTION` values,
+share matching block-range patterns (`BLK`/`BLOCK`/`n00`), with examples.
+**Decision rule (mechanical):** res 9 is demoted if EITHER the median NN
+distance >= the res-9 mean edge length (174.4 m) OR the quantization check
+fires on either axis; then **res 8 becomes primary** and res 9 is kept only
+as a labeled sensitivity run (`walkforward.py --res 9 --tag
+res9-sensitivity`). Expectation to verify, not assume: CMPD geocodes to
+block level, so res 8 primary is the likely outcome.
 
 > Audit output: NOT YET RUN — data host blocked (see Step 1).
 
@@ -159,8 +188,17 @@ single recommendation cannot honestly be produced without real data. To
 finish, unblock the hosts (or run on WSL), then in order:
 
 ```
-python data_pull.py      # Step 1 report
-python audits.py         # DATA QUALITY section (paste above)
+python data_pull.py --precheck   # maxRecordCount, supportsPagination,
+                                 # returnCountOnly total, occurred min/max —
+                                 # report before committing to the full pull
+python data_pull.py --tzcheck    # 500-row hour-of-day probe of DATE_REPORTED;
+                                 # if the as-stored histogram is the one with
+                                 # a waking-hours shape (day >> 3-5am), keep
+                                 # TZ_INTERPRETATION="naive_local"; if the
+                                 # eastern-shifted one is, set
+                                 # "utc_to_eastern" BEFORE pulling
+python data_pull.py              # full pull (cached) + Step 1 report
+python audits.py                 # DATA QUALITY section (paste above)
 python gridding.py --res <audit decision>   # cell inventory (paste above)
 python walkforward.py                        # primary run, >=24 folds
 python walkforward.py --res 9 --tag res9-sensitivity  # only if res 8 primary
