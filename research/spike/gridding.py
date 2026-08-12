@@ -20,8 +20,11 @@ from shapely.geometry import shape
 from shapely.ops import unary_union
 
 DATA = Path(__file__).parent / "data"
-CELLS_JSON = DATA / "cells_res9.json"
-H3_RES = 9
+H3_RES = 9  # default; audits.py may demote to 8 as primary
+
+
+def cells_path(res: int) -> Path:
+    return DATA / f"cells_res{res}.json"
 
 DEFAULT_BOUNDARY_URL = (
     # City of Charlotte open data — city limits layer (verify at first run;
@@ -42,18 +45,19 @@ def load_boundary(url: str | None, path: str | None):
     return unary_union(geoms)
 
 
-def cells_for_boundary(boundary) -> list[str]:
+def cells_for_boundary(boundary, res: int) -> list[str]:
     gj = boundary.__geo_interface__
-    cells = h3.geo_to_cells(gj, H3_RES)  # h3-py v4 API
+    cells = h3.geo_to_cells(gj, res)  # h3-py v4 API
     return sorted(cells)
 
 
-def build(url: str | None = None, path: str | None = None) -> dict:
+def build(url: str | None = None, path: str | None = None,
+          res: int = H3_RES) -> dict:
     boundary = load_boundary(url, path)
-    cells = cells_for_boundary(boundary)
+    cells = cells_for_boundary(boundary, res)
     areas_km2 = [h3.cell_area(c, unit="km^2") for c in cells]
     inventory = {
-        "h3_resolution": H3_RES,
+        "h3_resolution": res,
         "n_cells": len(cells),
         "mean_cell_area_km2": round(float(np.mean(areas_km2)), 6),
         "total_area_km2": round(float(np.sum(areas_km2)), 2),
@@ -62,21 +66,22 @@ def build(url: str | None = None, path: str | None = None) -> dict:
                       for c in cells},
     }
     DATA.mkdir(exist_ok=True)
-    CELLS_JSON.write_text(json.dumps(inventory))
+    cells_path(res).write_text(json.dumps(inventory))
     return inventory
 
 
-def load_cells() -> dict:
-    if not CELLS_JSON.exists():
-        raise SystemExit("Run gridding.py first: cell inventory must be fixed "
-                         "and written to RESULTS.md before any model runs.")
-    return json.loads(CELLS_JSON.read_text())
+def load_cells(res: int = H3_RES) -> dict:
+    if not cells_path(res).exists():
+        raise SystemExit(f"Run gridding.py --res {res} first: cell inventory "
+                         "must be fixed and written to RESULTS.md before any "
+                         "model runs.")
+    return json.loads(cells_path(res).read_text())
 
 
-def assign(df, cells: list[str]):
+def assign(df, cells: list[str], res: int = H3_RES):
     """Map incident lat/lon -> H3 cell; drop points outside the boundary."""
     cell_set = set(cells)
-    ids = [h3.latlng_to_cell(la, lo, H3_RES)
+    ids = [h3.latlng_to_cell(la, lo, res)
            for la, lo in zip(df["Latitude"], df["Longitude"])]
     df = df.assign(cell=ids)
     inside = df["cell"].isin(cell_set)
@@ -87,7 +92,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--boundary-url")
     ap.add_argument("--boundary-file")
+    ap.add_argument("--res", type=int, default=H3_RES)
     args = ap.parse_args()
-    inv = build(args.boundary_url, args.boundary_file)
+    inv = build(args.boundary_url, args.boundary_file, args.res)
     print(json.dumps({k: v for k, v in inv.items()
                       if k not in ("cells", "neighbors")}, indent=2))

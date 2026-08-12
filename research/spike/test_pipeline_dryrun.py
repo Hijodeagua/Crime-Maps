@@ -68,3 +68,25 @@ def test_lgbm_feature_importances(cube):
                  key=lambda t: -t[1])
     assert len(imp) == 13  # 6 lags + 3 nbr lags + dow + doy_sin/cos + cell_rate
     assert imp[0][1] > 0
+
+
+def test_daily_cube_aoristic_mass_conserved(grid):
+    import walkforward
+    cells, neighbors = grid
+    df = pd.DataFrame({
+        "cell": [cells[0], cells[1], cells[1]],
+        "DATE_INCIDENT_BEGAN": pd.to_datetime(
+            ["2024-01-01 18:00", "2024-01-02 06:00", "2024-01-04 12:00"]),
+        "DATE_INCIDENT_END": pd.to_datetime(
+            ["2024-01-03 06:00", None, "2024-01-04 13:00"]),
+    })
+    counts, nbr, days = walkforward.daily_cube(df, cells, neighbors,
+                                               aoristic=True)
+    assert counts.sum() == pytest.approx(3.0)      # unit mass per incident
+    assert days[0] == pd.Timestamp("2024-01-01")
+    i0 = cells.index(cells[0])
+    assert counts[i0, 0] == pytest.approx(1 / 6)   # 6h of a 36h window
+    assert counts[i0, 1] == pytest.approx(2 / 3)
+    plain, _, _ = walkforward.daily_cube(df, cells, neighbors, aoristic=False)
+    assert plain.sum() == pytest.approx(3.0)
+    assert plain[i0, 0] == 1.0                     # all mass on begin day

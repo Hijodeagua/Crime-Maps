@@ -70,14 +70,53 @@ backfill guard.
   inside that window are invisible; in production the same guard would delay
   model refresh by up to 30 days.
 
+## DATA QUALITY (pre-model audits) — MUST PRECEDE ANY METRICS TABLE
+
+Two audits (`audits.py`) run after the pull and before anything else;
+`walkforward.py` hard-refuses to start until both have written their JSON.
+Their markdown output is inserted here, ahead of the metrics table, when
+the data is reachable.
+
+### 1. Coordinate precision audit — PENDING DATA ACCESS
+
+Reports per stratum: distinct coordinate pairs vs total incidents; top 20
+most frequent coordinates with counts and share; median nearest-neighbor
+distance between distinct points (local equirectangular projection).
+**Decision rule (mechanical):** res 9 stays primary iff the median NN
+distance between distinct points is **below** the res-9 mean edge length
+(174.4 m); otherwise the data's effective precision is coarser than res 9,
+**res 8 becomes primary**, and res 9 is kept only as a labeled sensitivity
+run (`walkforward.py --res 9 --tag res9-sensitivity`). Expectation to
+verify, not assume: CMPD geocodes to block level, so res 8 primary is the
+likely outcome.
+
+> Audit output: NOT YET RUN — data host blocked (see Step 1).
+
+### 2. Temporal censoring audit — PENDING DATA ACCESS
+
+Reports per stratum: occurred-from → occurred-to window length distribution
+(p50/p90/p99), share of windows over 6 h and over 24 h, share with missing
+end time. **Decision rule (mechanical):** any stratum with > 15% of windows
+over 6 h gets **aoristic weighting** — each incident's unit weight spread
+over the days its window touches, proportional to overlap (hand-verified in
+`test_audits.py`: a Mon-18:00→Wed-06:00 window contributes 1/6, 2/3, 1/6) —
+and the weighted daily cell counts feed that stratum's models. Burglary and
+MV theft are the likely candidates (discovered, not observed); the audit
+decides, and the strata that got aoristic treatment are recorded in the
+fold-scores output (`aoristic` column) and reported here.
+
+> Audit output: NOT YET RUN — data host blocked (see Step 1).
+
 ## Step 2 — units: FIXED IN CODE, INVENTORY PENDING DATA ACCESS
 
-H3 **resolution 9** primary, clipped to the Charlotte city boundary
-(`gridding.py`). The rule "write total cell count and cell area into
-RESULTS.md before any model runs" is enforced mechanically:
+H3 resolution clipped to the Charlotte city boundary (`gridding.py`),
+**primary resolution decided by the coordinate audit above** (9 if the data
+supports it, else 8; res-9 edge ~174 m / cell ~0.105 km², res-8 edge
+~461 m / cell ~0.737 km²). The rule "write total cell count and cell area
+into RESULTS.md before any model runs" is enforced mechanically:
 `walkforward.py` refuses to start unless `gridding.py` has written the cell
-inventory, and the inventory (n_cells, mean cell area ~0.105 km², total
-area) must be pasted here before a real run.
+inventory for the audit-decided resolution, and the inventory must be
+pasted here before a real run.
 
 > **Cell inventory: NOT YET COMPUTED — boundary layer unreachable (blocked
 > host above). This section must be filled in before the first model run.**
@@ -117,14 +156,25 @@ baseline by winning a majority of folds.
 
 The metric table, per-fold chart, LightGBM feature importances, and the
 single recommendation cannot honestly be produced without real data. To
-finish: unblock the hosts (or run on WSL) →
-`python data_pull.py && python gridding.py && python walkforward.py`,
-paste the Step 1 report and Step 2 inventory here, then fill the tables
-from `data/fold_scores.csv`.
+finish, unblock the hosts (or run on WSL), then in order:
+
+```
+python data_pull.py      # Step 1 report
+python audits.py         # DATA QUALITY section (paste above)
+python gridding.py --res <audit decision>   # cell inventory (paste above)
+python walkforward.py                        # primary run, >=24 folds
+python walkforward.py --res 9 --tag res9-sensitivity  # only if res 8 primary
+```
+
+then fill the tables from `data/fold_scores.csv`. The baseline rule stands:
+a model beats (a) long-run hotspot only by winning a **majority of folds**,
+per stratum, and the per-fold spread is reported alongside medians.
 
 ## Test suite
 
-`pytest -q` → **12 passed** (metrics toy example ×7, Hawkes recovery ×3,
-pipeline dry run ×2). Venv: Python 3.11.15, ~700 MB total (largest single
-contributor: tick's transitive scipy/sklearn/matplotlib/pandas set, ~600 MB
-combined — noted against the 500 MB flag rule; no torch, nothing GPU).
+`pytest -q` → **18 passed** (metrics toy example ×7, Hawkes recovery ×3,
+audits ×5 — coordinate decision both directions, censoring flag rule,
+hand-computed aoristic weights — pipeline dry run ×3). Venv: Python
+3.11.15, ~700 MB total (largest single contributor: tick's transitive
+scipy/sklearn/matplotlib/pandas set, ~600 MB combined — noted against the
+500 MB flag rule; no torch, nothing GPU).

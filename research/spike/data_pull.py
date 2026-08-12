@@ -26,9 +26,23 @@ import requests
 
 QUERY_URL = ("https://gis.charlottenc.gov/arcgis/rest/services/CMPD/"
              "CMPDIncidents/MapServer/0/query")
-FIELDS = ["OBJECTID", "DATE_INCIDENT_BEGAN", "DATE_REPORTED", "Latitude",
-          "Longitude", "HIGHEST_NIBRS_CODE", "HIGHEST_NIBRS_DESCRIPTION",
-          "DIVISION_ID"]
+FIELDS = ["OBJECTID", "DATE_INCIDENT_BEGAN", "DATE_INCIDENT_END",
+          "DATE_REPORTED", "Latitude", "Longitude", "HIGHEST_NIBRS_CODE",
+          "HIGHEST_NIBRS_DESCRIPTION", "DIVISION_ID"]
+LAYER_META_URL = ("https://gis.charlottenc.gov/arcgis/rest/services/CMPD/"
+                  "CMPDIncidents/MapServer/0?f=json")
+
+
+def available_fields() -> list[str]:
+    """Intersect requested fields with the live layer schema so an absent
+    occurred-to field degrades the censoring audit instead of failing the pull."""
+    r = requests.get(LAYER_META_URL, timeout=60)
+    r.raise_for_status()
+    live = {f["name"] for f in r.json().get("fields", [])}
+    missing = [f for f in FIELDS if f not in live]
+    if missing:
+        print(f"WARNING: layer lacks fields {missing}; pulling without them")
+    return [f for f in FIELDS if f in live]
 PAGE = 2000
 DATA = Path(__file__).parent / "data"
 RAW = DATA / "raw"
@@ -47,6 +61,7 @@ STRATA = {  # NIBRS code -> stratum
 
 def pull() -> pd.DataFrame:
     RAW.mkdir(parents=True, exist_ok=True)
+    fields = available_fields()
     offset, frames = 0, []
     while True:
         cache = RAW / f"page_{offset:07d}.json"
@@ -54,7 +69,7 @@ def pull() -> pd.DataFrame:
             payload = json.loads(cache.read_text())
         else:
             r = requests.get(QUERY_URL, params={
-                "where": "1=1", "outFields": ",".join(FIELDS),
+                "where": "1=1", "outFields": ",".join(fields),
                 "returnGeometry": "false", "f": "json",
                 "orderByFields": "OBJECTID",
                 "resultOffset": offset, "resultRecordCount": PAGE,
@@ -73,8 +88,11 @@ def pull() -> pd.DataFrame:
             break
         offset += len(feats)
     df = pd.concat(frames, ignore_index=True).drop_duplicates("OBJECTID")
-    for col in ("DATE_INCIDENT_BEGAN", "DATE_REPORTED"):
-        df[col] = pd.to_datetime(df[col], unit="ms", errors="coerce")
+    for col in ("DATE_INCIDENT_BEGAN", "DATE_INCIDENT_END", "DATE_REPORTED"):
+        if col in df:
+            df[col] = pd.to_datetime(df[col], unit="ms", errors="coerce")
+    if "DATE_INCIDENT_END" not in df:
+        df["DATE_INCIDENT_END"] = pd.NaT
     DATA.mkdir(exist_ok=True)
     df.to_parquet(PARQUET)
     return df

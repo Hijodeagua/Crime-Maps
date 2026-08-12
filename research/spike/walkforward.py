@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 
 import models
+from audits import aoristic_daily_weights, load_audits
 from data_pull import STRATA, load_usable
 from gridding import assign, load_cells
 from metrics import score_coverages
@@ -35,15 +36,29 @@ MODELS = {
 }
 
 
-def daily_cube(df: pd.DataFrame, cells: list[str], neighbors: dict):
-    """(n_cells, n_days) count cube + neighbor cube + date index."""
+def daily_cube(df: pd.DataFrame, cells: list[str], neighbors: dict,
+               aoristic: bool = False):
+    """(n_cells, n_days) count cube + neighbor cube + date index.
+
+    aoristic=True spreads each incident's unit weight uniformly across the
+    days its occurred-from -> occurred-to window touches (audits.py rule);
+    otherwise all weight lands on the begin day.
+    """
     idx = {c: i for i, c in enumerate(cells)}
-    days = pd.date_range(df["DATE_INCIDENT_BEGAN"].min().normalize(),
-                         df["DATE_INCIDENT_BEGAN"].max().normalize(), freq="D")
+    if aoristic:
+        event_days, weights, src = aoristic_daily_weights(
+            df["DATE_INCIDENT_BEGAN"].reset_index(drop=True),
+            df["DATE_INCIDENT_END"].reset_index(drop=True))
+        cells_per_row = df["cell"].reset_index(drop=True).to_numpy()[src]
+    else:
+        event_days = pd.DatetimeIndex(df["DATE_INCIDENT_BEGAN"].dt.normalize())
+        weights = np.ones(len(df))
+        cells_per_row = df["cell"].to_numpy()
+    days = pd.date_range(event_days.min(), event_days.max(), freq="D")
     day_pos = {d: i for i, d in enumerate(days)}
     counts = np.zeros((len(cells), len(days)))
-    for cell, day in zip(df["cell"], df["DATE_INCIDENT_BEGAN"].dt.normalize()):
-        counts[idx[cell], day_pos[day]] += 1
+    for cell, day, w in zip(cells_per_row, event_days, weights):
+        counts[idx[cell], day_pos[day]] += w
     nbr = np.zeros_like(counts)
     for c, ns in neighbors.items():
         if ns:
@@ -63,31 +78,40 @@ def folds(days: pd.DatetimeIndex, n_folds: int):
     return [(slice(s - train_len, s), slice(s, s + HORIZON)) for s in starts]
 
 
-def run(n_folds: int | None):
-    inv = load_cells()
+def run(n_folds: int | None, res: int | None = None, tag: str = "primary"):
+    coord_audit, temp_audit = load_audits()   # hard gate: audits first
+    if res is None:
+        res = coord_audit["primary_resolution"]
+    aoristic_strata = set(temp_audit["aoristic_strata"])
+    inv = load_cells(res)
     cells, neighbors = inv["cells"], inv["neighbors"]
-    print(f"grid fixed: {inv['n_cells']} cells, "
+    print(f"[{tag}] grid fixed: {inv['n_cells']} cells, "
           f"{inv['total_area_km2']} km^2 (resolution {inv['h3_resolution']})")
     df = load_usable()
-    df, outside_pct = assign(df, cells)
+    df, outside_pct = assign(df, cells, res)
     print(f"incidents outside boundary dropped: {outside_pct}%")
 
     records = []
     for stratum in sorted(set(STRATA.values())):
         sub = df[df["stratum"] == stratum]
-        counts, nbr, days = daily_cube(sub, cells, neighbors)
+        aoristic = stratum in aoristic_strata
+        counts, nbr, days = daily_cube(sub, cells, neighbors, aoristic)
         for k, (tr, ev) in enumerate(folds(days, n_folds)):
             observed = counts[:, ev].sum(axis=1)
             for name, fn in MODELS.items():
                 pred = fn(counts[:, tr], nbr[:, tr], days[tr])
                 for cov, s in score_coverages(pred, observed, COVERAGES).items():
                     records.append(dict(stratum=stratum, fold=k, model=name,
-                                        coverage=cov, hit_rate=s.hit_rate,
-                                        pai=s.pai, pei=s.pei,
-                                        n_events=int(observed.sum())))
-            print(f"{stratum} fold {k}: done ({int(observed.sum())} events)")
+                                        resolution=res, run=tag,
+                                        aoristic=aoristic, coverage=cov,
+                                        hit_rate=s.hit_rate, pai=s.pai,
+                                        pei=s.pei,
+                                        n_events=round(float(observed.sum()), 1)))
+            print(f"{stratum} fold {k}: done ({observed.sum():.0f} events"
+                  f"{', aoristic' if aoristic else ''})")
     out = pd.DataFrame(records)
-    out.to_csv(OUT, index=False)
+    path = OUT if tag == "primary" else OUT.with_name(f"fold_scores_{tag}.csv")
+    out.to_csv(path, index=False)
     summarize(out)
 
 
@@ -110,5 +134,10 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--folds", type=int, default=None,
                     help="limit number of folds (default: all, min 24)")
+    ap.add_argument("--res", type=int, default=None,
+                    help="override H3 resolution (default: audit decision)")
+    ap.add_argument("--tag", default="primary",
+                    help="run label; use e.g. res9-sensitivity for the "
+                         "labeled sensitivity check when res 8 is primary")
     args = ap.parse_args()
-    run(args.folds)
+    run(args.folds, args.res, args.tag)
