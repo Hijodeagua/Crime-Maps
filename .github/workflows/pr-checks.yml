@@ -1,0 +1,26 @@
+name: PR checks
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: pr-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    uses: Hijodeagua/tre_pom/.github/workflows/pr-checks.yml@v1
+    with:
+      gitleaks: true
+      trivy: true
+      cycodeScanTypes: ""        # "secret sca iac sast" once Cycode creds exist
+      blockOnFindings: true
+    secrets:
+      CYCODE_CLIENT_ID: ${{ secrets.CYCODE_CLIENT_ID }}
+      CYCODE_CLIENT_SECRET: ${{ secrets.CYCODE_CLIENT_SECRET }}

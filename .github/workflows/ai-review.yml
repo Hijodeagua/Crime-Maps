@@ -1,0 +1,35 @@
+name: AI review
+
+on:
+  pull_request:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Only fires on an explicit click: the `ai-review` label, or a /review comment.
+    if: >-
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.event.label.name == 'ai-review') ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request != null &&
+       github.event.comment.body == '/review' &&
+       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
+    # A called workflow cannot hold more permission than its caller, so the
+    # caller has to grant these or the review cannot post its comment.
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    uses: Hijodeagua/tre_pom/.github/workflows/ai-review.yml@v1
+    with:
+      model: claude-haiku-4-5-20251001
+      maxTurns: "8"
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
